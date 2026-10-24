@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { copyJpegMetadata } from './jpegMetadata'
+import { copyJpegMetadata, readJpegOrientation } from './jpegMetadata'
 import {
   createHistory,
   historyPush,
@@ -355,6 +355,48 @@ describe('copyJpegMetadata', () => {
     expect([...merged.slice(0, 10)]).toEqual([
       0xff, 0xd8, 0xff, 0xe1, 0x00, 0x06, 0x45, 0x78, 0x69, 0x66,
     ])
+    expect(merged.includes(0xda)).toBe(true)
+  })
+
+  it('ставит ориентацию 1 и убирает чужой ICC, не меняя исходный файл', () => {
+    const tiff = new Uint8Array(8 + 2 + 12 + 4)
+    tiff[0] = 0x49
+    tiff[1] = 0x49
+    tiff[2] = 42
+    tiff[4] = 8
+    tiff[8] = 1
+    tiff[10] = 0x12
+    tiff[11] = 0x01
+    tiff[12] = 3
+    tiff[14] = 1
+    tiff[18] = 6
+    const payload = new Uint8Array(6 + tiff.length)
+    payload.set([0x45, 0x78, 0x69, 0x66, 0, 0])
+    payload.set(tiff, 6)
+    const app1 = new Uint8Array(4 + payload.length)
+    app1[0] = 0xff
+    app1[1] = 0xe1
+    const length = payload.length + 2
+    app1[2] = length >> 8
+    app1[3] = length & 0xff
+    app1.set(payload, 4)
+    const app2 = Uint8Array.from([0xff, 0xe2, 0x00, 0x04, 0x49, 0x43])
+    const source = new Uint8Array(2 + app1.length + app2.length + 2)
+    source.set([0xff, 0xd8])
+    source.set(app1, 2)
+    source.set(app2, 2 + app1.length)
+    source.set([0xff, 0xd9], 2 + app1.length + app2.length)
+    const snapshot = [...source]
+    const rendered = Uint8Array.from([
+      0xff, 0xd8, 0xff, 0xe0, 0x00, 0x04, 0x00, 0x00, 0xff, 0xda, 0x00, 0x02,
+      0x00, 0xff, 0xd9,
+    ])
+    const merged = copyJpegMetadata(source, rendered)
+
+    expect([...source]).toEqual(snapshot)
+    expect(readJpegOrientation(source)).toBe(6)
+    expect(readJpegOrientation(merged)).toBe(1)
+    expect(merged.includes(0xe2)).toBe(false)
     expect(merged.includes(0xda)).toBe(true)
   })
 })

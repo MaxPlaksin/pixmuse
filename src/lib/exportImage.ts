@@ -2,11 +2,24 @@ import { copyJpegMetadata } from './jpegMetadata'
 import type { EditRecipe } from './recipe'
 import { renderRecipe, type Raster } from './renderRecipe'
 
+export function openBitmap(file: Blob): Promise<ImageBitmap> {
+  return createImageBitmap(file, { imageOrientation: 'from-image' })
+}
+
+export function fittedSize(width: number, height: number, maxEdge = 0) {
+  if (!maxEdge || maxEdge <= 0) return { width, height }
+  const scale = Math.min(1, maxEdge / Math.max(width, height))
+  return {
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale)),
+  }
+}
+
 export async function decodePreview(
   file: Blob,
   maxEdge = 1280,
 ): Promise<Raster> {
-  const bitmap = await createImageBitmap(file)
+  const bitmap = await openBitmap(file)
   const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height))
   const width = Math.max(1, Math.round(bitmap.width * scale))
   const height = Math.max(1, Math.round(bitmap.height * scale))
@@ -65,8 +78,9 @@ export async function renderFileToBlob(
   recipe: EditRecipe,
   format: 'jpeg' | 'png',
   quality = 0.92,
+  maxEdge = 0,
 ): Promise<Blob> {
-  const bitmap = await createImageBitmap(file)
+  const bitmap = await openBitmap(file)
   const canvas = document.createElement('canvas')
   canvas.width = bitmap.width
   canvas.height = bitmap.height
@@ -87,8 +101,15 @@ export async function renderFileToBlob(
   const image = outputContext.createImageData(rendered.width, rendered.height)
   image.data.set(rendered.pixels)
   outputContext.putImageData(image, 0, 0)
+  const size = fittedSize(rendered.width, rendered.height, maxEdge)
+  const encoded = document.createElement('canvas')
+  encoded.width = size.width
+  encoded.height = size.height
+  const encodedContext = encoded.getContext('2d')
+  if (!encodedContext) throw new Error('Браузер не поддерживает Canvas 2D')
+  encodedContext.drawImage(output, 0, 0, size.width, size.height)
   const blob = await canvasBlob(
-    output,
+    encoded,
     format === 'png' ? 'image/png' : 'image/jpeg',
     quality,
   )

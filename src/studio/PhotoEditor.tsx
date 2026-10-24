@@ -6,7 +6,9 @@ import {
   ArrowUUpRight,
   Crop,
   DownloadSimple,
+  Eyedropper,
   FirstAid,
+  Hand,
   FloppyDisk,
   Images,
   Moon,
@@ -17,6 +19,7 @@ import {
   Trash,
 } from '@phosphor-icons/react'
 import { decodePreview, downloadBlob, renderFileToBlob } from '../lib/exportImage'
+import { inspectPixels, type RgbHistogram } from '../lib/inspect'
 import { historyRedo, historyUndo, type History } from '../lib/history'
 import { renderPreview, StalePreview } from '../lib/previewClient'
 import {
@@ -34,7 +37,7 @@ import {
 } from '../lib/recipe'
 import type { Raster } from '../lib/renderRecipe'
 
-type EditorTool = 'color' | 'crop' | StrokeTool
+type EditorTool = 'color' | 'crop' | 'sample' | 'hand' | StrokeTool
 
 interface EditorPhoto {
   id: string
@@ -52,6 +55,36 @@ const bandLabels: Record<HslBand, string> = {
   blue: 'Синий',
   purple: 'Фиолетовый',
   magenta: 'Пурпурный',
+}
+
+function HistogramPlot({ report }: { report?: RgbHistogram }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const context = canvas.getContext('2d')
+    if (!context) return
+    context.clearRect(0, 0, canvas.width, canvas.height)
+    if (!report) return
+    const peak = Math.max(1, ...report.red, ...report.green, ...report.blue)
+    const draw = (bins: number[], color: string) => {
+      context.beginPath()
+      context.strokeStyle = color
+      context.lineWidth = 1
+      for (let x = 0; x < 256; x += 1) {
+        const y = 64 - (bins[x] / peak) * 60
+        if (x === 0) context.moveTo(x + 0.5, y)
+        else context.lineTo(x + 0.5, y)
+      }
+      context.stroke()
+    }
+    context.globalAlpha = 0.9
+    draw(report.red, '#c44747')
+    draw(report.green, '#2f8f4e')
+    draw(report.blue, '#3a67c9')
+    context.globalAlpha = 1
+  }, [report])
+  return <canvas ref={canvasRef} className="histogram" width={256} height={64} />
 }
 
 function paint(canvas: HTMLCanvasElement | null, raster: Raster) {
@@ -205,6 +238,8 @@ export function PhotoEditor({
   onSavePreset,
   onDeletePreset,
   onApplyToSeries,
+  jpegQuality,
+  exportMaxEdge,
 }: {
   active: boolean
   photos: EditorPhoto[]
@@ -218,6 +253,8 @@ export function PhotoEditor({
   onSavePreset: (preset: ProcessingPreset) => void
   onDeletePreset: (id: string) => void
   onApplyToSeries: (preset: ProcessingPreset) => void
+  jpegQuality: number
+  exportMaxEdge: number
 }) {
   const selected = photos.find((photo) => photo.id === selectedId) ?? photos[0]
   const recipe = history?.present ?? defaultRecipe()
@@ -233,6 +270,8 @@ export function PhotoEditor({
   const [stageSize, setStageSize] = useState({ width: 800, height: 600 })
   const [rendering, setRendering] = useState(false)
   const [message, setMessage] = useState<string>()
+  const [report, setReport] = useState<RgbHistogram>()
+  const [sample, setSample] = useState<{ x: number; y: number; r: number; g: number; b: number }>()
   const afterRef = useRef<HTMLCanvasElement>(null)
   const beforeRef = useRef<HTMLCanvasElement>(null)
   const stageRef = useRef<HTMLDivElement>(null)
@@ -244,6 +283,7 @@ export function PhotoEditor({
   const latest = useRef(recipe)
   const stroke = useRef<LocalStroke | null>(null)
   const cropStart = useRef<{ x: number; y: number } | null>(null)
+  const pan = useRef<{ x: number; y: number; left: number; top: number } | null>(null)
   latest.current = recipe
 
   useEffect(() => {
@@ -279,6 +319,7 @@ export function PhotoEditor({
         )
         if (cancelled) return
         paint(afterRef.current, after)
+        setReport(inspectPixels(after.pixels))
         setFrame({ width: after.width, height: after.height })
         if (compare) {
           const neutral = defaultRecipe()
@@ -364,7 +405,13 @@ export function PhotoEditor({
     if (!selected) return
     setMessage(undefined)
     try {
-      const blob = await renderFileToBlob(selected.file, latest.current, format)
+      const blob = await renderFileToBlob(
+        selected.file,
+        latest.current,
+        format,
+        jpegQuality,
+        exportMaxEdge,
+      )
       const baseName = selected.file.name.replace(/\.[^.]+$/, '')
       downloadBlob(blob, `${baseName}-pixmuse.${format === 'jpeg' ? 'jpg' : 'png'}`)
     } catch {
@@ -397,6 +444,27 @@ export function PhotoEditor({
       // Синтетическое событие не всегда позволяет захватить указатель.
     }
     const point = pointerRatio(event)
+    if (tool === 'sample') {
+      const canvas = afterRef.current
+      const context = canvas?.getContext('2d')
+      if (!canvas || !context || canvas.width < 1) return
+      const x = Math.min(canvas.width - 1, Math.max(0, Math.floor(point.x * canvas.width)))
+      const y = Math.min(canvas.height - 1, Math.max(0, Math.floor(point.y * canvas.height)))
+      const pixel = context.getImageData(x, y, 1, 1).data
+      setSample({ x, y, r: pixel[0], g: pixel[1], b: pixel[2] })
+      return
+    }
+    if (tool === 'hand') {
+      const stage = stageRef.current
+      if (!stage) return
+      pan.current = {
+        x: event.clientX,
+        y: event.clientY,
+        left: stage.scrollLeft,
+        top: stage.scrollTop,
+      }
+      return
+    }
     if (tool === 'crop') {
       beginGesture()
       cropStart.current = point
@@ -421,6 +489,11 @@ export function PhotoEditor({
 
   function onCanvasMove(event: React.PointerEvent<HTMLCanvasElement>) {
     const captured = event.currentTarget.hasPointerCapture(event.pointerId)
+    if (tool === 'hand' && pan.current && stageRef.current) {
+      stageRef.current.scrollLeft = pan.current.left - (event.clientX - pan.current.x)
+      stageRef.current.scrollTop = pan.current.top - (event.clientY - pan.current.y)
+      return
+    }
     if (!captured && !stroke.current && !cropStart.current) return
     const point = pointerRatio(event)
     if (tool === 'crop' && cropStart.current) {
@@ -451,6 +524,7 @@ export function PhotoEditor({
   }
 
   function onCanvasUp() {
+    pan.current = null
     cropStart.current = null
     stroke.current = null
     commitGesture()
@@ -466,6 +540,8 @@ export function PhotoEditor({
   const displayScale = Math.max(0.05, fit * zoom)
   const tools: Array<{ id: EditorTool; label: string; icon: ReactNode }> = [
     { id: 'color', label: 'Цвет', icon: <Sun size={18} /> },
+    { id: 'sample', label: 'Пипетка', icon: <Eyedropper size={18} /> },
+    { id: 'hand', label: 'Рука', icon: <Hand size={18} /> },
     { id: 'crop', label: 'Кадр', icon: <Crop size={18} /> },
     { id: 'heal', label: 'Лечение', icon: <FirstAid size={18} /> },
     { id: 'dodge', label: 'Свет', icon: <SunDim size={18} /> },
@@ -523,6 +599,13 @@ export function PhotoEditor({
           >
             100%
           </button>
+          <button
+            type="button"
+            className="text-button"
+            onClick={() => setZoom(fit > 0 ? 2 / fit : 2)}
+          >
+            200%
+          </button>
           <button type="button" className="icon-button" aria-label="Увеличить" onClick={() => setZoom((value) => Math.min(8, value * 1.25))}>
             <span>+</span>
           </button>
@@ -569,7 +652,7 @@ export function PhotoEditor({
             />
             <canvas
               ref={afterRef}
-              className={`editor-canvas ${tool === 'color' ? '' : 'interactive'}`}
+              className={`editor-canvas ${tool === 'color' ? '' : 'interactive'} ${tool === 'hand' ? 'pan' : ''} ${tool === 'sample' ? 'sample' : ''}`}
               style={compare ? { clipPath: `inset(0 0 0 ${comparison}%)` } : undefined}
               onPointerDown={onCanvasDown}
               onPointerMove={onCanvasMove}
@@ -614,6 +697,32 @@ export function PhotoEditor({
       </div>
 
       <aside className="editor-params">
+        <div className="histogram-panel">
+          <div className="setting-label">
+            <span>RGB</span>
+            <span>
+              {report
+                ? `${report.pixels.toLocaleString('ru-RU')} px`
+                : 'Нет данных'}
+            </span>
+          </div>
+          <HistogramPlot report={report} />
+          {report && report.clippedHighlights / report.pixels > 0.005 && (
+            <p className="clip-warning">
+              Пересвет: {((report.clippedHighlights / report.pixels) * 100).toFixed(1)}%
+            </p>
+          )}
+          {report && report.clippedShadows / report.pixels > 0.005 && (
+            <p className="clip-warning">
+              Провал в тенях: {((report.clippedShadows / report.pixels) * 100).toFixed(1)}%
+            </p>
+          )}
+          {sample && (
+            <p className="sample-readout">
+              Пипетка {sample.x},{sample.y}: R {sample.r} G {sample.g} B {sample.b}
+            </p>
+          )}
+        </div>
         {tool === 'color' && (
           <>
             <div className="panel-heading">

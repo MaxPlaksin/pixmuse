@@ -44,11 +44,76 @@ function stripAppMetadata(jpeg: Uint8Array): Uint8Array {
   return output
 }
 
+function exifView(segment: Uint8Array):
+  | { view: DataView; little: boolean; tiff: number }
+  | undefined {
+  if (segment.length < 16 || segment[1] !== 0xe1) return undefined
+  const payload = 4
+  const exif =
+    segment[payload] === 0x45 &&
+    segment[payload + 1] === 0x78 &&
+    segment[payload + 2] === 0x69 &&
+    segment[payload + 3] === 0x66 &&
+    segment[payload + 4] === 0 &&
+    segment[payload + 5] === 0
+  if (!exif) return undefined
+  const tiff = payload + 6
+  const little = segment[tiff] === 0x49 && segment[tiff + 1] === 0x49
+  const big = segment[tiff] === 0x4d && segment[tiff + 1] === 0x4d
+  if (!little && !big) return undefined
+  const view = new DataView(segment.buffer, segment.byteOffset, segment.byteLength)
+  if (view.getUint16(tiff + 2, little) !== 42) return undefined
+  return { view, little, tiff }
+}
+
+function orientationEntry(segment: Uint8Array): number | undefined {
+  const parsed = exifView(segment)
+  if (!parsed) return undefined
+  const { view, little, tiff } = parsed
+  const ifd = tiff + view.getUint32(tiff + 4, little)
+  if (ifd + 2 > segment.length) return undefined
+  const count = view.getUint16(ifd, little)
+  for (let index = 0; index < count; index += 1) {
+    const entry = ifd + 2 + index * 12
+    if (entry + 12 > segment.length) return undefined
+    const tag = view.getUint16(entry, little)
+    const type = view.getUint16(entry + 2, little)
+    const components = view.getUint32(entry + 4, little)
+    if (tag === 0x0112 && type === 3 && components === 1) return entry
+  }
+  return undefined
+}
+
+export function readJpegOrientation(jpeg: Uint8Array): number {
+  const segment = appSegments(jpeg).find((item) => item[1] === 0xe1)
+  if (!segment) return 1
+  const entry = orientationEntry(segment)
+  const parsed = exifView(segment)
+  if (entry === undefined || !parsed) return 1
+  return parsed.view.getUint16(entry + 8, parsed.little)
+}
+
+function normalizeOrientation(segment: Uint8Array): Uint8Array {
+  const entry = orientationEntry(segment)
+  const parsed = exifView(segment)
+  if (entry === undefined || !parsed) return segment
+  if (parsed.view.getUint16(entry + 8, parsed.little) === 1) return segment
+  const copy = segment.slice()
+  new DataView(copy.buffer, copy.byteOffset, copy.byteLength).setUint16(
+    entry + 8,
+    1,
+    parsed.little,
+  )
+  return copy
+}
+
 export function copyJpegMetadata(
   source: Uint8Array,
   rendered: Uint8Array,
 ): Uint8Array {
   const metadata = appSegments(source)
+    .filter((segment) => segment[1] !== 0xe2)
+    .map((segment) => normalizeOrientation(segment))
   if (
     metadata.length === 0 ||
     rendered.length < 2 ||

@@ -1,4 +1,4 @@
-import { attachJpegMetadata } from './exportImage'
+import { attachJpegMetadata, fittedSize, openBitmap } from './exportImage'
 import { recipeIsIdentity, type EditRecipe } from './recipe'
 import { renderRecipe } from './renderRecipe'
 
@@ -135,7 +135,7 @@ async function fileToImageData(file: Blob): Promise<{
   bitmap: ImageBitmap
   imageData: ImageData
 }> {
-  const bitmap = await createImageBitmap(file)
+  const bitmap = await openBitmap(file)
   const canvas = document.createElement('canvas')
   canvas.width = bitmap.width
   canvas.height = bitmap.height
@@ -169,6 +169,7 @@ export async function processPhoto(
     quality?: number
     recipe?: EditRecipe
     format?: 'jpeg' | 'png'
+    maxEdge?: number
   },
 ): Promise<Blob> {
   const quality = options?.quality ?? 0.92
@@ -218,8 +219,15 @@ export async function processPhoto(
     }
   }
 
+  const size = fittedSize(canvas.width, canvas.height, options?.maxEdge ?? 0)
+  const encoded = document.createElement('canvas')
+  encoded.width = size.width
+  encoded.height = size.height
+  const encodedContext = encoded.getContext('2d')
+  if (!encodedContext) throw new Error('Браузер не поддерживает Canvas 2D')
+  encodedContext.drawImage(canvas, 0, 0, size.width, size.height)
   const blob = await new Promise<Blob>((resolve, reject) => {
-    canvas.toBlob(
+    encoded.toBlob(
       (value) =>
         value ? resolve(value) : reject(new Error('Не удалось создать файл')),
       format === 'png' ? 'image/png' : 'image/jpeg',

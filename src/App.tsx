@@ -653,6 +653,8 @@ export function App() {
             adjustments,
             {
               format: exportFormat,
+              quality: jpegQuality,
+              maxEdge: exportMaxEdge,
               recipe: recipesRef.current[photo.id]?.present,
             },
           )
@@ -708,7 +710,7 @@ export function App() {
       const baseName = photo.file.name.replace(/\.[^.]+$/, '')
       zip.file(`${baseName}-pixmuse.${extension}`, photo.result!)
     })
-    const archive = await zip.generateAsync({ type: 'blob' })
+    const archive = await zip.generateAsync({ type: 'blob', streamFiles: true })
     downloadBlob(archive, 'pixmuse-export.zip')
   }
 
@@ -903,6 +905,8 @@ export function App() {
             rememberPresets(presets.filter((preset) => preset.id !== id))
           }
           onApplyToSeries={applyLookToSeries}
+          jpegQuality={jpegQuality}
+          exportMaxEdge={exportMaxEdge}
         />
       ) : (
       <section className="workspace">
@@ -1172,6 +1176,29 @@ export function App() {
             >
               Применить пресет к серии
             </button>
+            <p className="export-note">Цвет экспорта: sRGB</p>
+            <label htmlFor="jpeg-quality">
+              Качество JPEG {Math.round(jpegQuality * 100)}%
+            </label>
+            <input
+              id="jpeg-quality"
+              type="range"
+              min={60}
+              max={100}
+              value={Math.round(jpegQuality * 100)}
+              onChange={(event) => setJpegQuality(Number(event.target.value) / 100)}
+            />
+            <label htmlFor="export-edge">Длинная сторона</label>
+            <select
+              id="export-edge"
+              value={exportMaxEdge}
+              onChange={(event) => setExportMaxEdge(Number(event.target.value))}
+            >
+              <option value={0}>Как у оригинала</option>
+              <option value={1280}>1280 px</option>
+              <option value={2048}>2048 px</option>
+              <option value={3840}>3840 px</option>
+            </select>
             <div className="format-switch" aria-label="Формат экспорта">
               <button
                 type="button"
