@@ -53,7 +53,8 @@ a:focus-visible {
 }
 
 .topbar {
-  height: 66px;
+  min-height: 66px;
+  height: auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -979,8 +980,34 @@ h2,
 
 .topbar {
   display: grid;
-  grid-template-columns: minmax(140px, 1fr) auto minmax(140px, 1fr);
+  grid-template-columns: minmax(120px, auto) auto minmax(280px, 1fr);
   gap: 12px;
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+.project-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.project-actions .profile-button {
+  min-height: 34px;
+  padding: 0 10px;
+}
+
+.project-note,
+.project-status {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.project-status {
+  margin: 28px;
 }
 
 .topbar-actions {

@@ -26,6 +26,18 @@ import {
 import { downloadBlob } from './lib/exportImage'
 import { createHistory, historyPush, type History } from './lib/history'
 import {
+  buildProjectRecord,
+  createIndexedDbRepository,
+  fileFromStored,
+  matchSourceFiles,
+  packProject,
+  REFERENCE_FILE_ID,
+  unpackProject,
+  type ProjectRecord,
+  type ProjectRepository,
+  type SavedReference,
+} from './lib/projectStore'
+import {
   applyPreset,
   defaultRecipe,
   readPresets,
@@ -45,6 +57,15 @@ interface PhotoItem {
   resultUrl?: string
   result?: Blob
   status: PhotoStatus
+  missing?: boolean
+  byteSize?: number
+}
+
+const missingPreview =
+  'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=='
+
+function revokeUrl(url?: string) {
+  if (url?.startsWith('blob:')) URL.revokeObjectURL(url)
 }
 
 const acceptedTypes = new Set(['image/jpeg', 'image/png'])
@@ -256,11 +277,22 @@ export function App() {
   )
   const [presetId, setPresetId] = useState('')
   const [exportFormat, setExportFormat] = useState<'jpeg' | 'png'>('jpeg')
+  const [jpegQuality, setJpegQuality] = useState(0.92)
+  const [exportMaxEdge, setExportMaxEdge] = useState(0)
+  const [hydrated, setHydrated] = useState(false)
+  const [persistReady, setPersistReady] = useState(false)
+  const [projectNote, setProjectNote] = useState<string>()
+  const [referenceMissing, setReferenceMissing] = useState<SavedReference>()
   const [batchPaused, setBatchPaused] = useState(false)
   const batchControl = useRef({ paused: false, cancelled: false })
   const recipesRef = useRef(recipes)
   const photoInput = useRef<HTMLInputElement>(null)
   const referenceInput = useRef<HTMLInputElement>(null)
+  const projectInput = useRef<HTMLInputElement>(null)
+  const relinkInput = useRef<HTMLInputElement>(null)
+  const repositoryRef = useRef<ProjectRepository | null>(null)
+  const filesStoredRef = useRef(true)
+  const filesKeyRef = useRef<string | null>(null)
   const photosRef = useRef<PhotoItem[]>([])
   const referenceUrlRef = useRef<string | undefined>(undefined)
 
@@ -276,10 +308,10 @@ export function App() {
 
   useEffect(() => {
     return () => {
-      if (referenceUrlRef.current) URL.revokeObjectURL(referenceUrlRef.current)
+      revokeUrl(referenceUrlRef.current)
       photosRef.current.forEach((photo) => {
-        URL.revokeObjectURL(photo.sourceUrl)
-        if (photo.resultUrl) URL.revokeObjectURL(photo.resultUrl)
+        revokeUrl(photo.sourceUrl)
+        revokeUrl(photo.resultUrl)
       })
     }
   }, [])
@@ -341,6 +373,170 @@ export function App() {
     localStorage.setItem('pixmuse-font', selectedFont.id)
   }, [fontId])
 
+  function currentRecord(): ProjectRecord {
+    return buildProjectRecord({
+      photos: photosRef.current.map((photo) => ({
+        id: photo.id,
+        file: photo.file,
+        missing: photo.missing,
+        byteSize: photo.byteSize,
+      })),
+      recipes: recipesRef.current,
+      selectedId,
+      reference,
+      referenceMeta: reference ? undefined : referenceMissing,
+      strength,
+      adjustments,
+      exportFormat,
+      jpegQuality,
+      exportMaxEdge,
+      presets,
+    })
+  }
+
+  function adoptRecord(record: ProjectRecord) {
+    photosRef.current.forEach((photo) => {
+      revokeUrl(photo.sourceUrl)
+      revokeUrl(photo.resultUrl)
+    })
+    revokeUrl(referenceUrlRef.current)
+
+    const nextPhotos: PhotoItem[] = record.session.photos.map((meta) => {
+      const file = fileFromStored(meta, record.files[meta.id])
+      const missing = !file
+      const usable =
+        file ??
+        new File([], meta.name, { type: meta.type, lastModified: meta.lastModified })
+      return {
+        id: meta.id,
+        file: usable,
+        sourceUrl: missing ? missingPreview : URL.createObjectURL(usable),
+        status: 'waiting',
+        missing,
+        byteSize: meta.size,
+      }
+    })
+    const nextRecipes = { ...record.session.recipes }
+    nextPhotos.forEach((photo) => {
+      nextRecipes[photo.id] ??= createHistory(defaultRecipe())
+    })
+    setPhotos(nextPhotos)
+    setRecipes(nextRecipes)
+    setSelectedId(
+      record.session.selectedId &&
+        nextPhotos.some((photo) => photo.id === record.session.selectedId)
+        ? record.session.selectedId
+        : nextPhotos[0]?.id,
+    )
+    setStrength(record.session.strength)
+    setAdjustments(record.session.adjustments)
+    setExportFormat(record.session.exportFormat)
+    setJpegQuality(record.session.jpegQuality ?? 0.92)
+    setExportMaxEdge(record.session.exportMaxEdge ?? 0)
+    setPresets(record.session.presets ?? [])
+    writePresets(localStorage, record.session.presets ?? [])
+
+    const referenceFile = record.session.reference
+      ? fileFromStored(record.session.reference, record.files[REFERENCE_FILE_ID])
+      : undefined
+    if (referenceFile) {
+      setReference(referenceFile)
+      setReferenceUrl(URL.createObjectURL(referenceFile))
+      setReferenceMissing(undefined)
+      readColorStats(referenceFile)
+        .then(setReferenceStats)
+        .catch(() => setReferenceStats(undefined))
+    } else {
+      setReference(undefined)
+      setReferenceUrl(undefined)
+      setReferenceStats(undefined)
+      setReferenceMissing(record.session.reference)
+    }
+    const missingNames = nextPhotos.filter((photo) => photo.missing).map((photo) => photo.file.name)
+    if (record.session.reference && !referenceFile) missingNames.push(record.session.reference.name)
+    setProjectNote(
+      missingNames.length > 0
+        ? 'Рецепты восстановлены. Привяжите исходные файлы заново.'
+        : 'Проект открыт с этого Mac',
+    )
+  }
+
+  useEffect(() => {
+    let cancelled = false
+    const repository = createIndexedDbRepository()
+    repositoryRef.current = repository
+    repository
+      .load()
+      .then((record) => {
+        if (cancelled) return
+        if (record) adoptRecord(record)
+        setPersistReady(true)
+      })
+      .catch(() => {
+        if (!cancelled) setProjectNote('Локальный проект не открылся')
+      })
+      .finally(() => {
+        if (!cancelled) setHydrated(true)
+      })
+    return () => {
+      cancelled = true
+    }
+    // Загрузка один раз при старте. Повторный запуск затёр бы несохранённые правки.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const projectSourceKey = [
+    photos
+      .map(
+        (photo) =>
+          `${photo.id}:${photo.byteSize ?? photo.file.size}:${photo.missing ? 1 : 0}:${photo.file.name}`,
+      )
+      .join('|'),
+    reference ? `${reference.name}:${reference.size}` : '',
+    referenceMissing ? `${referenceMissing.name}:${referenceMissing.size}` : '',
+  ].join('~')
+
+  useEffect(() => {
+    if (!hydrated || !persistReady) return
+    const repository = repositoryRef.current
+    if (!repository) return
+    const includeFiles = filesStoredRef.current
+      ? projectSourceKey !== filesKeyRef.current
+      : true
+    const timer = window.setTimeout(() => {
+      const record = currentRecord()
+      if (!includeFiles) record.session.filesStored = filesStoredRef.current
+      repository
+        .save(record, { includeFiles })
+        .then((result) => {
+          filesStoredRef.current = result.filesStored
+          if (result.filesStored) filesKeyRef.current = projectSourceKey
+          setProjectNote(
+            result.warning ??
+              (photosRef.current.some((photo) => photo.missing) || referenceMissing
+                ? 'Рецепты сохранены. Исходные файлы нужно привязать.'
+                : 'Сохранено на этом Mac'),
+          )
+        })
+        .catch(() => setProjectNote('Не удалось сохранить проект'))
+    }, 500)
+    return () => window.clearTimeout(timer)
+  }, [
+    hydrated,
+    projectSourceKey,
+    recipes,
+    reference,
+    referenceMissing,
+    strength,
+    adjustments,
+    exportFormat,
+    jpegQuality,
+    exportMaxEdge,
+    selectedId,
+    presets,
+    persistReady,
+  ])
+
   function updateAdjustment(
     name: keyof RetouchAdjustments,
     value: number,
@@ -362,6 +558,8 @@ export function App() {
       setReference(file)
       setReferenceUrl(URL.createObjectURL(file))
       setReferenceStats(stats)
+      setReferenceMissing(undefined)
+      setPersistReady(true)
     } catch {
       setMessage('Не удалось прочитать эталонное изображение')
     }
@@ -372,7 +570,9 @@ export function App() {
     setReference(undefined)
     setReferenceUrl(undefined)
     setReferenceStats(undefined)
+    setReferenceMissing(undefined)
     setMessage(undefined)
+    setPersistReady(true)
     if (referenceInput.current) referenceInput.current.value = ''
   }
 
@@ -393,6 +593,7 @@ export function App() {
       return recipesNext
     })
     setSelectedId((current) => current ?? next[0].id)
+    setPersistReady(true)
     setMessage(
       valid.length === Array.from(files).length
         ? undefined
@@ -404,8 +605,8 @@ export function App() {
     setPhotos((current) => {
       const target = current.find((photo) => photo.id === id)
       if (target) {
-        URL.revokeObjectURL(target.sourceUrl)
-        if (target.resultUrl) URL.revokeObjectURL(target.resultUrl)
+        revokeUrl(target.sourceUrl)
+        revokeUrl(target.resultUrl)
       }
       return current.filter((photo) => photo.id !== id)
     })
@@ -436,7 +637,8 @@ export function App() {
         isPaused: () => batchControl.current.paused,
         isCancelled: () => batchControl.current.cancelled,
       },
-      shouldRun: (photo) => (onlyErrors ? photo.status === 'error' : true),
+      shouldRun: (photo) =>
+        !photo.missing && (onlyErrors ? photo.status === 'error' : true),
       work: async (photo) => {
         setPhotos((current) =>
           current.map((item) =>
@@ -510,6 +712,85 @@ export function App() {
     downloadBlob(archive, 'pixmuse-export.zip')
   }
 
+  async function downloadProject() {
+    try {
+      const archive = await packProject(currentRecord())
+      downloadBlob(archive, 'pixmuse-project.zip')
+    } catch {
+      setProjectNote('Не удалось собрать архив проекта')
+    }
+  }
+
+  async function openProjectFile(file?: File) {
+    if (!file) return
+    try {
+      const record = await unpackProject(file)
+      const repository = repositoryRef.current
+      let next = record
+      if (repository) {
+        const saved = await repository.save(record)
+        filesStoredRef.current = saved.filesStored
+        filesKeyRef.current = null
+        if (!saved.filesStored) next = { session: { ...record.session, filesStored: false }, files: {} }
+        if (saved.warning) setProjectNote(saved.warning)
+      }
+      setPersistReady(true)
+      adoptRecord(next)
+    } catch (error) {
+      setProjectNote(error instanceof Error ? error.message : 'Не удалось открыть проект')
+    }
+  }
+
+  function relinkFiles(list: FileList | File[]) {
+    const incoming = Array.from(list)
+    const expected = photos.map((photo) => ({
+      id: photo.id,
+      name: photo.file.name,
+      size: photo.byteSize ?? photo.file.size,
+    }))
+    if (reference) {
+      expected.push({
+        id: REFERENCE_FILE_ID,
+        name: reference.name,
+        size: reference.size,
+      })
+    } else if (referenceMissing) {
+      expected.push({
+        id: REFERENCE_FILE_ID,
+        name: referenceMissing.name,
+        size: referenceMissing.size,
+      })
+    }
+    const { matched, missing } = matchSourceFiles(expected, incoming)
+    setPhotos((current) =>
+      current.map((photo) => {
+        const file = matched[photo.id]
+        if (!file) return photo
+        revokeUrl(photo.sourceUrl)
+        revokeUrl(photo.resultUrl)
+        return {
+          ...photo,
+          file,
+          sourceUrl: URL.createObjectURL(file),
+          resultUrl: undefined,
+          result: undefined,
+          status: 'waiting',
+          missing: false,
+          byteSize: file.size,
+        }
+      }),
+    )
+    const linkedReference = matched[REFERENCE_FILE_ID]
+    if (linkedReference) void chooseReference(linkedReference)
+    filesKeyRef.current = null
+    setPersistReady(true)
+    setProjectNote(
+      missing.length > 0
+        ? `Не найдены файлы: ${missing.join(', ')}`
+        : 'Исходные файлы привязаны',
+    )
+  }
+
   return (
     <main className="app-shell">
       <header className="topbar">
@@ -536,6 +817,35 @@ export function App() {
           </button>
         </nav>
         <div className="topbar-actions">
+          <div className="project-actions">
+            <button
+              className="profile-button"
+              type="button"
+              disabled={!hydrated}
+              onClick={() => void downloadProject()}
+            >
+              <DownloadSimple size={16} />
+              Скачать проект
+            </button>
+            <button
+              className="profile-button"
+              type="button"
+              disabled={!hydrated}
+              onClick={() => projectInput.current?.click()}
+            >
+              <UploadSimple size={16} />
+              Открыть проект
+            </button>
+            <button
+              className="profile-button"
+              type="button"
+              disabled={!hydrated}
+              onClick={() => relinkInput.current?.click()}
+            >
+              Привязать файлы
+            </button>
+            {projectNote && <span className="project-note">{projectNote}</span>}
+          </div>
           <div className="privacy-note">
             <ShieldCheck size={17} />
             Фото остаются на этом Mac
@@ -551,7 +861,31 @@ export function App() {
         </div>
       </header>
 
-      {mode === 'editor' ? (
+      <input
+        ref={projectInput}
+        type="file"
+        accept=".zip,application/zip"
+        hidden
+        onChange={(event) => {
+          void openProjectFile(event.target.files?.[0])
+          event.target.value = ''
+        }}
+      />
+      <input
+        ref={relinkInput}
+        type="file"
+        accept="image/jpeg,image/png"
+        multiple
+        hidden
+        onChange={(event) => {
+          if (event.target.files) relinkFiles(event.target.files)
+          event.target.value = ''
+        }}
+      />
+
+      {!hydrated ? (
+        <p className="project-status">Открываю сохранённый проект</p>
+      ) : mode === 'editor' ? (
         <PhotoEditor
           active={mode === 'editor'}
           photos={photos}
