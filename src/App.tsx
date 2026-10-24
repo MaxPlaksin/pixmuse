@@ -181,7 +181,8 @@ export function App() {
   }
 
   async function chooseReference(file?: File) {
-    if (!file || !acceptedTypes.has(file.type)) {
+    if (!file) return
+    if (!acceptedTypes.has(file.type)) {
       setMessage('Эталон должен быть в формате JPEG или PNG')
       return
     }
@@ -196,6 +197,15 @@ export function App() {
     } catch {
       setMessage('Не удалось прочитать эталонное изображение')
     }
+  }
+
+  function removeReference() {
+    if (referenceUrl) URL.revokeObjectURL(referenceUrl)
+    setReference(undefined)
+    setReferenceUrl(undefined)
+    setReferenceStats(undefined)
+    setMessage(undefined)
+    if (referenceInput.current) referenceInput.current.value = ''
   }
 
   function addPhotos(files: FileList | File[]) {
@@ -339,21 +349,34 @@ export function App() {
                 {reference && <Check className="success-icon" size={19} />}
               </div>
 
-              <button
-                className="reference-picker"
-                type="button"
-                onClick={() => referenceInput.current?.click()}
-              >
-                {referenceUrl ? (
-                  <img src={referenceUrl} alt="Выбранный эталон" />
-                ) : (
-                  <span>
-                    <UploadSimple size={23} />
-                    Выбрать обработанный кадр
-                    <small>JPEG или PNG</small>
-                  </span>
+              <div className="reference-media">
+                <button
+                  className="reference-picker"
+                  type="button"
+                  onClick={() => referenceInput.current?.click()}
+                >
+                  {referenceUrl ? (
+                    <img src={referenceUrl} alt="Выбранный эталон" />
+                  ) : (
+                    <span>
+                      <UploadSimple size={23} />
+                      Выбрать обработанный кадр
+                      <small>JPEG или PNG</small>
+                    </span>
+                  )}
+                </button>
+                {referenceUrl && (
+                  <button
+                    className="delete-reference"
+                    type="button"
+                    aria-label="Удалить эталонную фотографию"
+                    title="Удалить фотографию"
+                    onClick={removeReference}
+                  >
+                    <Trash size={17} weight="bold" />
+                  </button>
                 )}
-              </button>
+              </div>
 
               <div className="setting">
                 <div className="setting-label">
