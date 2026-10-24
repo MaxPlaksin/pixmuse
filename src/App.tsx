@@ -43,6 +43,13 @@ const backgroundPresets = [
   '#f0f2f8',
   '#f6eff8',
 ]
+const panelPresets = [
+  '#fffafd',
+  '#fff5f9',
+  '#f8f4ff',
+  '#f3f8f6',
+  '#f4f7fc',
+]
 
 function makePhoto(file: File): PhotoItem {
   return {
@@ -114,6 +121,9 @@ export function App() {
   const [background, setBackground] = useState(
     () => localStorage.getItem('pixmuse-background') ?? backgroundPresets[0],
   )
+  const [panelBackground, setPanelBackground] = useState(
+    () => localStorage.getItem('pixmuse-panel') ?? panelPresets[0],
+  )
   const [adjustments, setAdjustments] = useState<RetouchAdjustments>({
     exposure: 0,
     contrast: 0,
@@ -172,6 +182,28 @@ export function App() {
     )
     localStorage.setItem('pixmuse-background', background)
   }, [background])
+
+  useEffect(() => {
+    const hex = panelBackground.replace('#', '')
+    const red = Number.parseInt(hex.slice(0, 2), 16)
+    const green = Number.parseInt(hex.slice(2, 4), 16)
+    const blue = Number.parseInt(hex.slice(4, 6), 16)
+    const luminance = (red * 299 + green * 587 + blue * 114) / 1000
+    const isLight = luminance > 145
+    document.documentElement.style.setProperty(
+      '--panel-background',
+      panelBackground,
+    )
+    document.documentElement.style.setProperty(
+      '--panel-text',
+      isLight ? '#442d38' : '#fff9fc',
+    )
+    document.documentElement.style.setProperty(
+      '--panel-muted',
+      isLight ? '#8b7180' : '#dacbd3',
+    )
+    localStorage.setItem('pixmuse-panel', panelBackground)
+  }, [panelBackground])
 
   function updateAdjustment(
     name: keyof RetouchAdjustments,
@@ -745,6 +777,31 @@ export function App() {
                     type="color"
                     value={background}
                     onChange={(event) => setBackground(event.target.value)}
+                  />
+                </label>
+              </div>
+            </div>
+            <div className="color-control background-control">
+              <label htmlFor="panel-color">Панель инструментов</label>
+              <p>Отдельный фон области «Стиль» и «Ретушь».</p>
+              <div className="color-presets">
+                {panelPresets.map((color) => (
+                  <button
+                    key={color}
+                    className={panelBackground === color ? 'selected' : ''}
+                    type="button"
+                    style={{ background: color }}
+                    aria-label={`Выбрать цвет панели ${color}`}
+                    onClick={() => setPanelBackground(color)}
+                  />
+                ))}
+                <label className="custom-color" title="Свой цвет панели">
+                  <Palette size={18} />
+                  <input
+                    id="panel-color"
+                    type="color"
+                    value={panelBackground}
+                    onChange={(event) => setPanelBackground(event.target.value)}
                   />
                 </label>
               </div>

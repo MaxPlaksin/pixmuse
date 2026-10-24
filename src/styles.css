@@ -15,6 +15,9 @@
   --radius: 16px;
   --app-background: #f8f3f7;
   --workspace-text: #442d38;
+  --panel-background: #fffafd;
+  --panel-text: #442d38;
+  --panel-muted: #8b7180;
 }
 
 * {
@@ -663,8 +666,23 @@ h2,
 }
 
 .control-panel {
-  background: var(--surface);
+  color: var(--panel-text);
+  background: var(--panel-background);
   box-shadow: 10px 0 34px rgba(113, 75, 94, 0.05);
+}
+
+.control-panel h1,
+.control-panel h2,
+.control-panel .setting-label,
+.control-panel .photo-meta strong {
+  color: var(--panel-text);
+}
+
+.control-panel .setting p,
+.control-panel .photo-meta small,
+.control-panel .reference-picker small,
+.control-panel .photo-dropzone small {
+  color: var(--panel-muted);
 }
 
 .preview-panel {
@@ -822,6 +840,7 @@ h2,
   width: min(390px, 92vw);
   height: 100%;
   padding: 26px;
+  overflow-y: auto;
   color: #4e3441;
   background: #fffafd;
   box-shadow: -20px 0 60px rgba(72, 42, 57, 0.16);
