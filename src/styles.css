@@ -977,6 +977,340 @@ h2,
   line-height: 1.4;
 }
 
+.topbar {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) auto minmax(140px, 1fr);
+  gap: 12px;
+}
+
+.topbar-actions {
+  justify-self: end;
+}
+
+.mode-switch {
+  display: flex;
+  padding: 4px;
+  border-radius: 14px;
+  background: #f3e7ee;
+}
+
+.mode-switch button {
+  min-height: 36px;
+  padding: 0 18px;
+  color: var(--muted);
+  border: 0;
+  border-radius: 11px;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.mode-switch button.active {
+  color: #4d2d3c;
+  background: #fff;
+  box-shadow: 0 5px 14px rgba(116, 77, 96, 0.1);
+}
+
+.batch-extra,
+.queue-actions {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.batch-extra label,
+.preset-name {
+  color: #5a3d4b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.batch-extra select,
+.preset-name input {
+  width: 100%;
+  min-height: 38px;
+  margin-top: 6px;
+  padding: 0 10px;
+  color: #442d38;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.batch-extra p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.format-switch,
+.geometry-actions,
+.band-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.format-switch button,
+.text-button,
+.band-list button,
+.preset-row button {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 10px;
+  color: #5a3d4b;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.format-switch button.active,
+.text-button.active,
+.band-list button.active {
+  color: var(--accent-ink);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, white);
+}
+
+.editor-shell {
+  height: calc(100dvh - 66px);
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr) 320px;
+  grid-template-rows: 58px minmax(0, 1fr) 104px;
+  background: var(--app-background);
+}
+
+.editor-topbar,
+.editor-film {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel-background) 88%, white);
+}
+
+.editor-film {
+  border-top: 1px solid var(--border);
+  border-bottom: 0;
+  overflow-x: auto;
+}
+
+.editor-title {
+  min-width: 0;
+  margin-right: auto;
+}
+
+.editor-title strong,
+.editor-title span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-title strong {
+  color: var(--panel-text);
+  font-size: 13px;
+}
+
+.editor-title span,
+.film-item span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.editor-tools,
+.editor-params {
+  min-height: 0;
+  overflow: auto;
+  background: var(--panel-background);
+  color: var(--panel-text);
+}
+
+.editor-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border-right: 1px solid var(--border);
+}
+
+.editor-tools button {
+  min-height: 58px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  color: var(--panel-muted);
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.editor-tools button.active {
+  color: #4d2d3c;
+  background: #fff;
+  box-shadow: 0 6px 16px rgba(116, 77, 96, 0.08);
+}
+
+.editor-stage {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  overflow: auto;
+  background:
+    linear-gradient(45deg, rgba(255, 255, 255, 0.28) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(255, 255, 255, 0.28) 25%, transparent 25%),
+    var(--app-background);
+  background-size: 22px 22px;
+}
+
+.editor-canvas-wrap {
+  position: relative;
+  flex: none;
+  box-shadow: 0 16px 40px rgba(104, 69, 87, 0.12);
+}
+
+.editor-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.editor-canvas.interactive {
+  cursor: crosshair;
+}
+
+.crop-rect {
+  position: absolute;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 999px rgba(58, 23, 37, 0.35);
+  pointer-events: none;
+}
+
+.editor-params {
+  padding: 16px 16px 28px;
+  border-left: 1px solid var(--border);
+}
+
+.curve-editor {
+  width: 100%;
+  height: 160px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fff;
+  touch-action: none;
+}
+
+.curve-editor path {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.curve-editor circle {
+  fill: #fff;
+  stroke: var(--accent);
+  stroke-width: 2;
+  cursor: grab;
+}
+
+.preset-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.preset-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px;
+  gap: 6px;
+}
+
+.preset-row button:first-child {
+  justify-content: flex-start;
+  overflow: hidden;
+}
+
+.film-add,
+.film-item {
+  position: relative;
+  flex: none;
+  width: 84px;
+  height: 78px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.film-item img {
+  width: 100%;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 11px 11px 0 0;
+}
+
+.film-item span {
+  display: block;
+  padding: 4px 6px 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.film-item.selected {
+  border-color: var(--accent);
+}
+
+.film-remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  border-radius: 6px;
+  background: rgba(68, 45, 56, 0.72);
+}
+
+.film-add {
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 @media (max-width: 760px) {
   .topbar-actions .privacy-note {
     display: none;
@@ -984,9 +1318,39 @@ h2,
 
   .profile-button {
     padding: 0 10px;
+    font-size: 0;
   }
 
-  .profile-button {
-    font-size: 0;
+  .topbar {
+    grid-template-columns: auto 1fr;
+  }
+
+  .editor-shell {
+    height: auto;
+    min-height: calc(100dvh - 66px);
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto minmax(420px, 68dvh) auto auto;
+  }
+
+  .editor-topbar,
+  .editor-film {
+    grid-column: auto;
+    overflow-x: auto;
+  }
+
+  .editor-tools {
+    flex-direction: row;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .editor-tools button {
+    min-width: 72px;
+    min-height: 52px;
+  }
+
+  .editor-params {
+    border-left: 0;
+    border-top: 1px solid var(--border);
   }
 }

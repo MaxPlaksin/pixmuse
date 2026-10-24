@@ -1,3 +1,7 @@
+import { attachJpegMetadata } from './exportImage'
+import { recipeIsIdentity, type EditRecipe } from './recipe'
+import { renderRecipe } from './renderRecipe'
+
 export type ChannelTriplet = [number, number, number]
 
 export interface ColorStats {
@@ -158,59 +162,69 @@ export async function readColorStats(file: Blob): Promise<ColorStats> {
 
 export async function processPhoto(
   file: Blob,
-  referenceStats: ColorStats,
+  referenceStats: ColorStats | undefined,
   strength: number,
   adjustments: RetouchAdjustments,
-  quality = 0.92,
+  options?: {
+    quality?: number
+    recipe?: EditRecipe
+    format?: 'jpeg' | 'png'
+  },
 ): Promise<Blob> {
+  const quality = options?.quality ?? 0.92
+  const format = options?.format ?? 'jpeg'
   const { bitmap, imageData } = await fileToImageData(file)
-  const sourceStats = calculateStats(imageData.data)
-  const transferred = transferPixels(
-    imageData.data,
-    sourceStats,
-    referenceStats,
-    strength,
-  )
-  const pixels = applyAdjustments(transferred, adjustments)
-  const canvas = document.createElement('canvas')
-  canvas.width = bitmap.width
-  canvas.height = bitmap.height
-  const context = canvas.getContext('2d')
-
+  let pixels: Uint8ClampedArray = new Uint8ClampedArray(imageData.data)
+  if (referenceStats && strength > 0) {
+    pixels = transferPixels(
+      pixels,
+      calculateStats(pixels),
+      referenceStats,
+      strength,
+    )
+  }
+  pixels = applyAdjustments(pixels, adjustments)
+  let width = bitmap.width
+  let height = bitmap.height
   bitmap.close()
-  if (!context) {
-    throw new Error('Браузер не поддерживает Canvas 2D')
+  if (options?.recipe && !recipeIsIdentity(options.recipe)) {
+    const rendered = renderRecipe(pixels, width, height, options.recipe)
+    pixels = rendered.pixels
+    width = rendered.width
+    height = rendered.height
   }
 
-  imageData.data.set(pixels)
-  context.putImageData(imageData, 0, 0)
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const context = canvas.getContext('2d', { willReadFrequently: true })
+  if (!context) throw new Error('Браузер не поддерживает Canvas 2D')
+  const output = context.createImageData(width, height)
+  output.data.set(pixels)
+  context.putImageData(output, 0, 0)
 
   if (adjustments.skinSmoothing && adjustments.skinSmoothing > 0) {
     const blurCanvas = document.createElement('canvas')
-    blurCanvas.width = canvas.width
-    blurCanvas.height = canvas.height
+    blurCanvas.width = width
+    blurCanvas.height = height
     const blurContext = blurCanvas.getContext('2d', { willReadFrequently: true })
     if (blurContext) {
       const radius = 0.6 + (adjustments.skinSmoothing / 100) * 2.4
       blurContext.filter = `blur(${radius}px)`
       blurContext.drawImage(canvas, 0, 0)
-      const blurred = blurContext.getImageData(
-        0,
-        0,
-        canvas.width,
-        canvas.height,
-      )
-      softenSkin(imageData, blurred, adjustments.skinSmoothing)
-      context.putImageData(imageData, 0, 0)
+      const blurred = blurContext.getImageData(0, 0, width, height)
+      softenSkin(output, blurred, adjustments.skinSmoothing)
+      context.putImageData(output, 0, 0)
     }
   }
 
-  return new Promise((resolve, reject) => {
+  const blob = await new Promise<Blob>((resolve, reject) => {
     canvas.toBlob(
-      (blob) =>
-        blob ? resolve(blob) : reject(new Error('Не удалось создать JPEG')),
-      'image/jpeg',
+      (value) =>
+        value ? resolve(value) : reject(new Error('Не удалось создать файл')),
+      format === 'png' ? 'image/png' : 'image/jpeg',
       quality,
     )
   })
+  return format === 'jpeg' ? attachJpegMetadata(file, blob) : blob
 }

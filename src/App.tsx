@@ -16,12 +16,25 @@ import {
   X,
 } from '@phosphor-icons/react'
 import JSZip from 'jszip'
+import { runQueue } from './lib/batchQueue'
 import {
   processPhoto,
   readColorStats,
   type ColorStats,
   type RetouchAdjustments,
 } from './lib/colorTransfer'
+import { downloadBlob } from './lib/exportImage'
+import { createHistory, historyPush, type History } from './lib/history'
+import {
+  applyPreset,
+  defaultRecipe,
+  readPresets,
+  recipeIsIdentity,
+  writePresets,
+  type EditRecipe,
+  type ProcessingPreset,
+} from './lib/recipe'
+import { PhotoEditor } from './studio/PhotoEditor'
 
 type PhotoStatus = 'waiting' | 'processing' | 'done' | 'error'
 
@@ -236,6 +249,16 @@ export function App() {
     warmth: 0,
     skinSmoothing: 18,
   })
+  const [mode, setMode] = useState<'batch' | 'editor'>('batch')
+  const [recipes, setRecipes] = useState<Record<string, History<EditRecipe>>>({})
+  const [presets, setPresets] = useState<ProcessingPreset[]>(() =>
+    readPresets(localStorage),
+  )
+  const [presetId, setPresetId] = useState('')
+  const [exportFormat, setExportFormat] = useState<'jpeg' | 'png'>('jpeg')
+  const [batchPaused, setBatchPaused] = useState(false)
+  const batchControl = useRef({ paused: false, cancelled: false })
+  const recipesRef = useRef(recipes)
   const photoInput = useRef<HTMLInputElement>(null)
   const referenceInput = useRef<HTMLInputElement>(null)
   const photosRef = useRef<PhotoItem[]>([])
@@ -249,6 +272,7 @@ export function App() {
 
   photosRef.current = photos
   referenceUrlRef.current = referenceUrl
+  recipesRef.current = recipes
 
   useEffect(() => {
     return () => {
@@ -361,6 +385,13 @@ export function App() {
 
     const next = valid.map(makePhoto)
     setPhotos((current) => [...current, ...next])
+    setRecipes((current) => {
+      const recipesNext = { ...current }
+      next.forEach((photo) => {
+        recipesNext[photo.id] = createHistory(defaultRecipe())
+      })
+      return recipesNext
+    })
     setSelectedId((current) => current ?? next[0].id)
     setMessage(
       valid.length === Array.from(files).length
@@ -378,46 +409,91 @@ export function App() {
       }
       return current.filter((photo) => photo.id !== id)
     })
+    setRecipes((current) => {
+      const next = { ...current }
+      delete next[id]
+      return next
+    })
     if (selectedId === id) setSelectedId(undefined)
   }
 
-  async function runBatch() {
-    if (!referenceStats || photos.length === 0 || isRunning) return
+  const seriesHasRecipe = photos.some((photo) => {
+    const present = recipes[photo.id]?.present
+    return present ? !recipeIsIdentity(present) : false
+  })
+
+  async function runBatch(onlyErrors = false) {
+    if (photos.length === 0 || isRunning) return
+    if (!referenceStats && !seriesHasRecipe) return
+    batchControl.current = { paused: false, cancelled: false }
+    setBatchPaused(false)
     setIsRunning(true)
     setMessage(undefined)
 
-    for (const photo of photos) {
-      setPhotos((current) =>
-        current.map((item) =>
-          item.id === photo.id ? { ...item, status: 'processing' } : item,
-        ),
-      )
-
-      try {
-        const result = await processPhoto(
-          photo.file,
-          referenceStats,
-          strength / 100,
-          adjustments,
-        )
-        const resultUrl = URL.createObjectURL(result)
-        setPhotos((current) =>
-          current.map((item) => {
-            if (item.id !== photo.id) return item
-            if (item.resultUrl) URL.revokeObjectURL(item.resultUrl)
-            return { ...item, result, resultUrl, status: 'done' }
-          }),
-        )
-      } catch {
+    await runQueue({
+      items: photos,
+      control: {
+        isPaused: () => batchControl.current.paused,
+        isCancelled: () => batchControl.current.cancelled,
+      },
+      shouldRun: (photo) => (onlyErrors ? photo.status === 'error' : true),
+      work: async (photo) => {
         setPhotos((current) =>
           current.map((item) =>
-            item.id === photo.id ? { ...item, status: 'error' } : item,
+            item.id === photo.id ? { ...item, status: 'processing' } : item,
           ),
         )
-      }
-    }
+        try {
+          const result = await processPhoto(
+            photo.file,
+            referenceStats,
+            strength / 100,
+            adjustments,
+            {
+              format: exportFormat,
+              recipe: recipesRef.current[photo.id]?.present,
+            },
+          )
+          const resultUrl = URL.createObjectURL(result)
+          setPhotos((current) =>
+            current.map((item) => {
+              if (item.id !== photo.id) return item
+              if (item.resultUrl) URL.revokeObjectURL(item.resultUrl)
+              return { ...item, result, resultUrl, status: 'done' }
+            }),
+          )
+        } catch {
+          setPhotos((current) =>
+            current.map((item) =>
+              item.id === photo.id ? { ...item, status: 'error' } : item,
+            ),
+          )
+        }
+      },
+    })
 
     setIsRunning(false)
+    setBatchPaused(false)
+  }
+
+  function rememberPresets(next: ProcessingPreset[]) {
+    setPresets(next)
+    writePresets(localStorage, next)
+  }
+
+  function applyLookToSeries(preset: ProcessingPreset) {
+    setRecipes((current) => {
+      const next = { ...current }
+      photos.forEach((photo) => {
+        const history = next[photo.id] ?? createHistory(defaultRecipe())
+        const applied = applyPreset(history.present, preset)
+        next[photo.id] =
+          JSON.stringify(applied) === JSON.stringify(history.present)
+            ? history
+            : historyPush(history, applied)
+      })
+      return next
+    })
   }
 
   async function downloadAll() {
@@ -425,16 +501,13 @@ export function App() {
     if (ready.length === 0) return
 
     const zip = new JSZip()
+    const extension = exportFormat === 'png' ? 'png' : 'jpg'
     ready.forEach((photo) => {
       const baseName = photo.file.name.replace(/\.[^.]+$/, '')
-      zip.file(`${baseName}-pixmuse.jpg`, photo.result!)
+      zip.file(`${baseName}-pixmuse.${extension}`, photo.result!)
     })
     const archive = await zip.generateAsync({ type: 'blob' })
-    const link = document.createElement('a')
-    link.href = URL.createObjectURL(archive)
-    link.download = 'pixmuse-export.zip'
-    link.click()
-    URL.revokeObjectURL(link.href)
+    downloadBlob(archive, 'pixmuse-export.zip')
   }
 
   return (
@@ -446,6 +519,22 @@ export function App() {
           </span>
           <span>pixmuse</span>
         </a>
+        <nav className="mode-switch" aria-label="Рабочие пространства">
+          <button
+            type="button"
+            className={mode === 'batch' ? 'active' : ''}
+            onClick={() => setMode('batch')}
+          >
+            Серия
+          </button>
+          <button
+            type="button"
+            className={mode === 'editor' ? 'active' : ''}
+            onClick={() => setMode('editor')}
+          >
+            Редактор
+          </button>
+        </nav>
         <div className="topbar-actions">
           <div className="privacy-note">
             <ShieldCheck size={17} />
@@ -462,6 +551,26 @@ export function App() {
         </div>
       </header>
 
+      {mode === 'editor' ? (
+        <PhotoEditor
+          active={mode === 'editor'}
+          photos={photos}
+          selectedId={selected?.id}
+          history={selected ? recipes[selected.id] : undefined}
+          presets={presets}
+          onSelect={setSelectedId}
+          onAdd={addPhotos}
+          onRemove={removePhoto}
+          onChangeHistory={(id, next) =>
+            setRecipes((current) => ({ ...current, [id]: next }))
+          }
+          onSavePreset={(preset) => rememberPresets([...presets, preset])}
+          onDeletePreset={(id) =>
+            rememberPresets(presets.filter((preset) => preset.id !== id))
+          }
+          onApplyToSeries={applyLookToSeries}
+        />
+      ) : (
       <section className="workspace">
         <aside className="control-panel">
           <div className="tool-tabs" aria-label="Инструменты обработки">
@@ -704,11 +813,59 @@ export function App() {
 
           {message && <p className="inline-message">{message}</p>}
 
+          <div className="batch-extra">
+            <label htmlFor="series-preset">Пресет редактора</label>
+            <select
+              id="series-preset"
+              value={presetId}
+              onChange={(event) => setPresetId(event.target.value)}
+            >
+              <option value="">Не выбран</option>
+              {presets.map((preset) => (
+                <option key={preset.id} value={preset.id}>
+                  {preset.name}
+                </option>
+              ))}
+            </select>
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={!presetId || photos.length === 0 || isRunning}
+              onClick={() => {
+                const preset = presets.find((item) => item.id === presetId)
+                if (preset) applyLookToSeries(preset)
+              }}
+            >
+              Применить пресет к серии
+            </button>
+            <div className="format-switch" aria-label="Формат экспорта">
+              <button
+                type="button"
+                className={exportFormat === 'jpeg' ? 'active' : ''}
+                onClick={() => setExportFormat('jpeg')}
+              >
+                JPG
+              </button>
+              <button
+                type="button"
+                className={exportFormat === 'png' ? 'active' : ''}
+                onClick={() => setExportFormat('png')}
+              >
+                PNG
+              </button>
+            </div>
+            <p>Глобальный рецепт каждого кадра добавляется к эталону. Локальные мазки остаются на своём фото.</p>
+          </div>
+
           <button
             className="primary-button"
             type="button"
-            disabled={!referenceStats || photos.length === 0 || isRunning}
-            onClick={runBatch}
+            disabled={
+              photos.length === 0 ||
+              isRunning ||
+              (!referenceStats && !seriesHasRecipe)
+            }
+            onClick={() => runBatch(false)}
           >
             {isRunning ? (
               <>
@@ -731,6 +888,40 @@ export function App() {
             <DownloadSimple size={18} />
             Скачать готовые ({completedCount})
           </button>
+          {isRunning && (
+            <div className="queue-actions">
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => {
+                  batchControl.current.paused = !batchControl.current.paused
+                  setBatchPaused(batchControl.current.paused)
+                }}
+              >
+                {batchPaused ? 'Продолжить' : 'Пауза'}
+              </button>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => {
+                  batchControl.current.cancelled = true
+                  batchControl.current.paused = false
+                  setBatchPaused(false)
+                }}
+              >
+                Отмена
+              </button>
+            </div>
+          )}
+          {!isRunning && photos.some((photo) => photo.status === 'error') && (
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => runBatch(true)}
+            >
+              Повторить ошибки
+            </button>
+          )}
         </aside>
 
         <section className="preview-panel">
@@ -807,6 +998,7 @@ export function App() {
           )}
         </section>
       </section>
+      )}
 
       {profileOpen && (
         <div

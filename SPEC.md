@@ -25,8 +25,10 @@
 
 ## Структура
 
-- `src/App.tsx` - рабочий интерфейс и пакетная очередь
-- `src/lib/colorTransfer.ts` - анализ и перенос цвета
+- `src/App.tsx` - общая библиотека фотографий и переключение режимов
+- `src/studio/PhotoEditor.tsx` - профессиональный редактор
+- `src/lib/colorTransfer.ts` - перенос цвета эталона
+- `src/lib/renderRecipe.ts` - неразрушающий рецепт обработки
 - `src/lib/*.test.ts` - модульные тесты
 - `src/styles.css` - адаптивная тема интерфейса
 
