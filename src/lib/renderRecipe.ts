@@ -531,15 +531,53 @@ function strokeInfluence(
   return influence
 }
 
-function sampleOutsideSpot(
-  source: Uint8ClampedArray,
+export function strokeBounds(
+  stroke: LocalStroke,
   width: number,
   height: number,
+): { x0: number; y0: number; x1: number; y1: number } | undefined {
+  if (stroke.points.length === 0 || width < 1 || height < 1) return undefined
+  const xDenom = width === 1 ? 1 : width - 1
+  const yDenom = height === 1 ? 1 : height - 1
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  for (const point of stroke.points) {
+    const x = point.x * (width === 1 ? 0 : width - 1)
+    const y = point.y * (height === 1 ? 0 : height - 1)
+    minX = Math.min(minX, x)
+    minY = Math.min(minY, y)
+    maxX = Math.max(maxX, x)
+    maxY = Math.max(maxY, y)
+  }
+  const brushPad = Math.ceil(stroke.radius * Math.max(xDenom, yDenom))
+  const samplePad =
+    stroke.tool === 'heal'
+      ? Math.ceil(Math.max(2, stroke.radius * Math.min(width, height)))
+      : 0
+  const pad = brushPad + samplePad + 1
+  return {
+    x0: Math.max(0, Math.floor(minX) - pad),
+    y0: Math.max(0, Math.floor(minY) - pad),
+    x1: Math.min(width - 1, Math.ceil(maxX) + pad),
+    y1: Math.min(height - 1, Math.ceil(maxY) + pad),
+  }
+}
+
+function sampleOutsideSpot(
+  source: Uint8ClampedArray,
+  bufferWidth: number,
   x: number,
   y: number,
   radius: number,
+  imageWidth: number,
+  imageHeight: number,
+  originX: number,
+  originY: number,
+  bufferHeight: number,
 ): [number, number, number] | undefined {
-  const radiusPx = Math.max(2, radius * Math.min(width, height))
+  const radiusPx = Math.max(2, radius * Math.min(imageWidth, imageHeight))
   let red = 0
   let green = 0
   let blue = 0
@@ -548,8 +586,21 @@ function sampleOutsideSpot(
     const angle = (Math.PI * 2 * step) / 8
     const sx = Math.round(x + Math.cos(angle) * radiusPx)
     const sy = Math.round(y + Math.sin(angle) * radiusPx)
-    if (sx < 0 || sy < 0 || sx >= width || sy >= height) continue
-    const index = indexOf(width, sx, sy)
+    const localX = sx - originX
+    const localY = sy - originY
+    if (
+      sx < 0 ||
+      sy < 0 ||
+      sx >= imageWidth ||
+      sy >= imageHeight ||
+      localX < 0 ||
+      localY < 0 ||
+      localX >= bufferWidth ||
+      localY >= bufferHeight
+    ) {
+      continue
+    }
+    const index = indexOf(bufferWidth, localX, localY)
     red += source[index]
     green += source[index + 1]
     blue += source[index + 2]
@@ -566,9 +617,18 @@ function applyStrokes(
   strokes: LocalStroke[],
 ) {
   for (const stroke of strokes) {
-    const reference = new Uint8ClampedArray(source)
-    for (let y = 0; y < height; y += 1) {
-      for (let x = 0; x < width; x += 1) {
+    const bounds = strokeBounds(stroke, width, height)
+    if (!bounds) continue
+    const regionWidth = bounds.x1 - bounds.x0 + 1
+    const regionHeight = bounds.y1 - bounds.y0 + 1
+    const reference = new Uint8ClampedArray(regionWidth * regionHeight * 4)
+    for (let y = bounds.y0; y <= bounds.y1; y += 1) {
+      const from = (y * width + bounds.x0) * 4
+      const to = (y - bounds.y0) * regionWidth * 4
+      reference.set(source.subarray(from, from + regionWidth * 4), to)
+    }
+    for (let y = bounds.y0; y <= bounds.y1; y += 1) {
+      for (let x = bounds.x0; x <= bounds.x1; x += 1) {
         const influence = strokeInfluence(stroke, x, y, width, height)
         if (influence === 0) continue
         const amount = (stroke.strength / 100) * influence
@@ -576,11 +636,15 @@ function applyStrokes(
         if (stroke.tool === 'heal') {
           const sampled = sampleOutsideSpot(
             reference,
-            width,
-            height,
+            regionWidth,
             x,
             y,
             stroke.radius,
+            width,
+            height,
+            bounds.x0,
+            bounds.y0,
+            regionHeight,
           )
           if (!sampled) continue
           source[index] = source[index] * (1 - amount) + sampled[0] * amount

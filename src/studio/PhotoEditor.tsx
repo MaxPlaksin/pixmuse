@@ -18,7 +18,7 @@ import {
 } from '@phosphor-icons/react'
 import { decodePreview, downloadBlob, renderFileToBlob } from '../lib/exportImage'
 import { historyRedo, historyUndo, type History } from '../lib/history'
-import { renderPreview } from '../lib/previewClient'
+import { renderPreview, StalePreview } from '../lib/previewClient'
 import {
   applyPreset,
   cloneRecipe,
@@ -262,8 +262,10 @@ export function PhotoEditor({
     const timer = window.setTimeout(async () => {
       setRendering(true)
       try {
-        if (!cache.current || cache.current.id !== selected.id) {
+        if (cache.current && cache.current.id !== selected.id) cache.current = undefined
+        if (!cache.current) {
           const decoded = await decodePreview(selected.file)
+          if (cancelled) return
           cache.current = { id: selected.id, ...decoded }
         }
         if (cancelled || !cache.current) return
@@ -294,8 +296,10 @@ export function PhotoEditor({
           )
           if (!cancelled) paint(beforeRef.current, before)
         }
-      } catch {
-        if (!cancelled) setMessage('Не удалось построить предпросмотр')
+      } catch (error) {
+        if (!cancelled && !(error instanceof StalePreview)) {
+          setMessage('Не удалось построить предпросмотр')
+        }
       } finally {
         if (!cancelled) setRendering(false)
       }

@@ -13,7 +13,7 @@ import {
   presetFromRecipe,
   recipeIsIdentity,
 } from './recipe'
-import { renderRecipe } from './renderRecipe'
+import { renderRecipe, strokeBounds } from './renderRecipe'
 
 function pixel(
   pixels: Uint8ClampedArray,
@@ -237,6 +237,35 @@ describe('renderRecipe', () => {
     const dodged = renderRecipe(source, 2, 1, dodge)
     expect(pixel(dodged.pixels, 2, 0, 0)[0]).toBeGreaterThan(80)
     expect(pixel(dodged.pixels, 2, 1, 0)[0]).toBe(80)
+
+    const width = 2400
+    const height = 1600
+    const large = new Uint8ClampedArray(width * height * 4)
+    large.fill(40)
+    const far = ((height - 1) * width + (width - 1)) * 4
+    large[far] = 7
+    large[far + 1] = 8
+    large[far + 2] = 9
+    const local = defaultRecipe()
+    local.strokes = [
+      {
+        id: 'corner',
+        tool: 'heal',
+        points: [{ x: 0.05, y: 0.05 }],
+        radius: 0.015,
+        strength: 100,
+      },
+    ]
+    const bounds = strokeBounds(local.strokes[0], width, height)
+    expect(bounds).toBeDefined()
+    const area = (bounds!.x1 - bounds!.x0 + 1) * (bounds!.y1 - bounds!.y0 + 1)
+    expect(area).toBeLessThan(width * height * 0.02)
+    const started = performance.now()
+    const painted = renderRecipe(large, width, height, local)
+    const elapsed = performance.now() - started
+    console.info(`stroke-2400x1600 ${elapsed.toFixed(1)} ms, area ${area}`)
+    expect(elapsed).toBeLessThan(200)
+    expect(pixel(painted.pixels, width, width - 1, height - 1)).toEqual([7, 8, 9, 40])
 
     const burn = defaultRecipe()
     burn.strokes = [

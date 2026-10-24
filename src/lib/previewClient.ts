@@ -1,8 +1,10 @@
 import type { EditRecipe } from './recipe'
-import { renderRecipe, type Raster } from './renderRecipe'
+import { createPreviewQueue, StalePreview } from './previewQueue'
+import type { Raster } from './renderRecipe'
 
 let worker: Worker | null = null
-let sequence = 0
+let workerSequence = 0
+const queue = createPreviewQueue<Raster>()
 
 function getWorker(): Worker | null {
   if (typeof Worker === 'undefined') return null
@@ -18,6 +20,48 @@ function getWorker(): Worker | null {
   }
 }
 
+function renderInWorker(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  recipe: EditRecipe,
+  ignoreCrop: boolean,
+): Promise<Raster> {
+  const thread = getWorker()
+  if (!thread) {
+    return Promise.reject(new Error('Предпросмотр не запустился в фоновом потоке'))
+  }
+  const requestId = ++workerSequence
+  return new Promise((resolve, reject) => {
+    const onMessage = (event: MessageEvent) => {
+      if (event.data?.requestId !== requestId) return
+      cleanup()
+      resolve({
+        pixels: new Uint8ClampedArray(event.data.buffer),
+        width: event.data.width,
+        height: event.data.height,
+      })
+    }
+    const onError = () => {
+      cleanup()
+      thread?.terminate()
+      worker = null
+      reject(new Error('Предпросмотр не запустился в фоновом потоке'))
+    }
+    function cleanup() {
+      thread?.removeEventListener('message', onMessage)
+      thread?.removeEventListener('error', onError)
+    }
+    thread.addEventListener('message', onMessage)
+    thread.addEventListener('error', onError)
+    const copy = source.slice()
+    thread.postMessage(
+      { requestId, buffer: copy.buffer, width, height, recipe, ignoreCrop },
+      [copy.buffer],
+    )
+  })
+}
+
 export function renderPreview(
   source: Uint8ClampedArray,
   width: number,
@@ -25,37 +69,9 @@ export function renderPreview(
   recipe: EditRecipe,
   ignoreCrop = false,
 ): Promise<Raster> {
-  const requestId = ++sequence
-  const fallback = () => renderRecipe(source, width, height, recipe, { ignoreCrop })
-  const current = getWorker()
-  if (!current) return Promise.resolve(fallback())
-
-  return new Promise((resolve) => {
-    let settled = false
-    const finish = (raster: Raster) => {
-      if (settled) return
-      settled = true
-      window.clearTimeout(timer)
-      current.removeEventListener('message', onMessage)
-      current.removeEventListener('error', onError)
-      resolve(raster)
-    }
-    const onMessage = (event: MessageEvent) => {
-      if (event.data.requestId !== requestId) return
-      finish({
-        pixels: new Uint8ClampedArray(event.data.buffer),
-        width: event.data.width,
-        height: event.data.height,
-      })
-    }
-    const onError = () => finish(fallback())
-    const timer = window.setTimeout(() => finish(fallback()), 1200)
-    current.addEventListener('message', onMessage)
-    current.addEventListener('error', onError)
-    const copy = source.slice()
-    current.postMessage(
-      { requestId, buffer: copy.buffer, width, height, recipe, ignoreCrop },
-      [copy.buffer],
-    )
-  })
+  return queue.submit(() =>
+    renderInWorker(source, width, height, recipe, ignoreCrop),
+  )
 }
+
+export { StalePreview }
