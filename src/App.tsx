@@ -62,9 +62,44 @@ const fontOptions = [
     value: "'Avenir Next', Avenir, sans-serif",
   },
   {
+    id: 'helvetica',
+    name: 'Helvetica Neue',
+    value: "'Helvetica Neue', Helvetica, Arial, sans-serif",
+  },
+  {
+    id: 'arial',
+    name: 'Arial',
+    value: "Arial, Helvetica, sans-serif",
+  },
+  {
     id: 'trebuchet',
     name: 'Trebuchet',
     value: "'Trebuchet MS', sans-serif",
+  },
+  {
+    id: 'verdana',
+    name: 'Verdana',
+    value: "Verdana, Geneva, sans-serif",
+  },
+  {
+    id: 'tahoma',
+    name: 'Tahoma',
+    value: "Tahoma, Geneva, sans-serif",
+  },
+  {
+    id: 'gill-sans',
+    name: 'Gill Sans',
+    value: "'Gill Sans', 'Gill Sans MT', sans-serif",
+  },
+  {
+    id: 'optima',
+    name: 'Optima',
+    value: "Optima, Candara, sans-serif",
+  },
+  {
+    id: 'futura',
+    name: 'Futura',
+    value: "Futura, 'Trebuchet MS', sans-serif",
   },
   {
     id: 'georgia',
@@ -72,9 +107,49 @@ const fontOptions = [
     value: "Georgia, 'Times New Roman', serif",
   },
   {
+    id: 'palatino',
+    name: 'Palatino',
+    value: "Palatino, 'Palatino Linotype', serif",
+  },
+  {
+    id: 'baskerville',
+    name: 'Baskerville',
+    value: "Baskerville, Georgia, serif",
+  },
+  {
+    id: 'times',
+    name: 'Times New Roman',
+    value: "'Times New Roman', Times, serif",
+  },
+  {
+    id: 'didot',
+    name: 'Didot',
+    value: "Didot, 'Bodoni 72', serif",
+  },
+  {
+    id: 'copperplate',
+    name: 'Copperplate',
+    value: "Copperplate, 'Copperplate Gothic Light', fantasy",
+  },
+  {
+    id: 'marker',
+    name: 'Marker Felt',
+    value: "'Marker Felt', 'Comic Sans MS', cursive",
+  },
+  {
+    id: 'brush',
+    name: 'Brush Script',
+    value: "'Brush Script MT', 'Segoe Script', cursive",
+  },
+  {
     id: 'mono',
-    name: 'Моно',
+    name: 'SF Mono',
     value: "'SFMono-Regular', Consolas, 'Liberation Mono', monospace",
+  },
+  {
+    id: 'courier',
+    name: 'Courier New',
+    value: "'Courier New', Courier, monospace",
   },
 ]
 
