@@ -50,6 +50,33 @@ const panelPresets = [
   '#f3f8f6',
   '#f4f7fc',
 ]
+const fontOptions = [
+  {
+    id: 'system',
+    name: 'Системный',
+    value: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+  },
+  {
+    id: 'avenir',
+    name: 'Avenir',
+    value: "'Avenir Next', Avenir, sans-serif",
+  },
+  {
+    id: 'trebuchet',
+    name: 'Trebuchet',
+    value: "'Trebuchet MS', sans-serif",
+  },
+  {
+    id: 'georgia',
+    name: 'Georgia',
+    value: "Georgia, 'Times New Roman', serif",
+  },
+  {
+    id: 'mono',
+    name: 'Моно',
+    value: "'SFMono-Regular', Consolas, 'Liberation Mono', monospace",
+  },
+]
 
 function makePhoto(file: File): PhotoItem {
   return {
@@ -123,6 +150,9 @@ export function App() {
   )
   const [panelBackground, setPanelBackground] = useState(
     () => localStorage.getItem('pixmuse-panel') ?? panelPresets[0],
+  )
+  const [fontId, setFontId] = useState(
+    () => localStorage.getItem('pixmuse-font') ?? fontOptions[0].id,
   )
   const [adjustments, setAdjustments] = useState<RetouchAdjustments>({
     exposure: 0,
@@ -204,6 +234,13 @@ export function App() {
     )
     localStorage.setItem('pixmuse-panel', panelBackground)
   }, [panelBackground])
+
+  useEffect(() => {
+    const selectedFont =
+      fontOptions.find((option) => option.id === fontId) ?? fontOptions[0]
+    document.documentElement.style.setProperty('--app-font', selectedFont.value)
+    localStorage.setItem('pixmuse-font', selectedFont.id)
+  }, [fontId])
 
   function updateAdjustment(
     name: keyof RetouchAdjustments,
@@ -804,6 +841,34 @@ export function App() {
                     onChange={(event) => setPanelBackground(event.target.value)}
                   />
                 </label>
+              </div>
+            </div>
+            <div className="color-control background-control font-control">
+              <label htmlFor="interface-font">Шрифт интерфейса</label>
+              <p>Применяется ко всему рабочему пространству Pixmuse.</p>
+              <select
+                id="interface-font"
+                value={fontId}
+                onChange={(event) => setFontId(event.target.value)}
+              >
+                {fontOptions.map((font) => (
+                  <option
+                    key={font.id}
+                    value={font.id}
+                    style={{ fontFamily: font.value }}
+                  >
+                    {font.name}
+                  </option>
+                ))}
+              </select>
+              <div
+                className="font-preview"
+                style={{
+                  fontFamily:
+                    fontOptions.find((font) => font.id === fontId)?.value,
+                }}
+              >
+                Pixmuse · Профессиональная ретушь
               </div>
             </div>
             <p className="saved-note">
