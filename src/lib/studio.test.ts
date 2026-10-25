@@ -238,6 +238,30 @@ describe('renderRecipe', () => {
     expect(pixel(dodged.pixels, 2, 0, 0)[0]).toBeGreaterThan(80)
     expect(pixel(dodged.pixels, 2, 1, 0)[0]).toBe(80)
 
+    const clone = defaultRecipe()
+    clone.strokes = [
+      {
+        id: 'clone',
+        tool: 'clone',
+        source: { x: 0, y: 0.5 },
+        points: [{ x: 1, y: 0.5 }],
+        radius: 0.2,
+        strength: 100,
+      },
+    ]
+    const cloned = renderRecipe(
+      new Uint8ClampedArray([
+        220, 20, 30, 255,
+        40, 180, 50, 255,
+        20, 30, 210, 255,
+      ]),
+      3,
+      1,
+      clone,
+    )
+    expect(pixel(cloned.pixels, 3, 2, 0)).toEqual([220, 20, 30, 255])
+    expect(pixel(cloned.pixels, 3, 0, 0)).toEqual([220, 20, 30, 255])
+
     const width = 2400
     const height = 1600
     const large = new Uint8ClampedArray(width * height * 4)
@@ -398,5 +422,86 @@ describe('copyJpegMetadata', () => {
     expect(readJpegOrientation(merged)).toBe(1)
     expect(merged.includes(0xe2)).toBe(false)
     expect(merged.includes(0xda)).toBe(true)
+  })
+})
+
+describe('каждый ползунок редактора меняет пиксели', () => {
+  function frame() {
+    const colors = [
+      [210, 150, 120],
+      [220, 20, 20],
+      [128, 128, 128],
+      [250, 250, 250],
+      [8, 8, 8],
+      [20, 40, 180],
+      [140, 130, 120],
+      [40, 200, 40],
+    ]
+    const pixels = new Uint8ClampedArray(colors.length * 4)
+    colors.forEach((color, index) => pixels.set([...color, 255], index * 4))
+    return pixels
+  }
+
+  function rendered(apply: (recipe: ReturnType<typeof defaultRecipe>) => void) {
+    const recipe = defaultRecipe()
+    apply(recipe)
+    return [...renderRecipe(frame(), 4, 2, recipe).pixels]
+  }
+
+  const baseline = [...renderRecipe(frame(), 4, 2, defaultRecipe()).pixels]
+
+  it.each([
+    ['exposure', 1],
+    ['contrast', 60],
+    ['highlights', -80],
+    ['shadows', 80],
+    ['whites', 80],
+    ['blacks', -80],
+    ['temperature', 80],
+    ['tint', 80],
+    ['saturation', 80],
+    ['vibrance', 80],
+    ['sharpness', 100],
+    ['denoise', 100],
+    ['skinSmoothing', 80],
+  ] as const)('%s сдвигает хотя бы один пиксель', (key, value) => {
+    expect(rendered((recipe) => {
+      recipe.adjustments[key] = value
+    })).not.toEqual(baseline)
+  })
+
+  it('сохранение текстуры меняет кожу, когда мягкость включена', () => {
+    const smooth = rendered((recipe) => {
+      recipe.adjustments.skinSmoothing = 80
+      recipe.adjustments.skinTexture = 0
+    })
+    const textured = rendered((recipe) => {
+      recipe.adjustments.skinSmoothing = 80
+      recipe.adjustments.skinTexture = 100
+    })
+    expect(smooth).not.toEqual(textured)
+  })
+
+  it('сдвиг красного тона меняет красный пиксель', () => {
+    expect(rendered((recipe) => {
+      recipe.hsl.red.hue = 80
+    })).not.toEqual(baseline)
+  })
+
+  it('кривая, поворот и масштаб меняют кадр', () => {
+    expect(rendered((recipe) => {
+      recipe.curve = [
+        { x: 0, y: 0 },
+        { x: 0.5, y: 0.8 },
+        { x: 1, y: 1 },
+      ]
+    })).not.toEqual(baseline)
+    expect(renderRecipe(frame(), 4, 2, defaultRecipe()).width).toBe(4)
+    const turned = defaultRecipe()
+    turned.geometry.rotation = 90
+    expect(renderRecipe(frame(), 4, 2, turned).width).toBe(2)
+    const scaled = defaultRecipe()
+    scaled.geometry.scale = 0.5
+    expect(renderRecipe(frame(), 4, 2, scaled).width).toBe(2)
   })
 })

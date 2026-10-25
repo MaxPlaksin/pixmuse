@@ -48,5 +48,12 @@ export function createPreviewQueue<T>() {
         void pump()
       })
     },
+    cancelPending(): void {
+      latest += 1
+      if (pending) {
+        pending.reject(new StalePreview())
+        pending = null
+      }
+    },
   }
 }

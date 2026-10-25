@@ -4,6 +4,7 @@ import {
   ArrowCounterClockwise,
   ArrowUUpLeft,
   ArrowUUpRight,
+  CopySimple,
   Crop,
   DownloadSimple,
   Eyedropper,
@@ -21,7 +22,11 @@ import {
 import { decodePreview, downloadBlob, renderFileToBlob } from '../lib/exportImage'
 import { inspectPixels, type RgbHistogram } from '../lib/inspect'
 import { historyRedo, historyUndo, type History } from '../lib/history'
-import { renderPreview, StalePreview } from '../lib/previewClient'
+import {
+  disposePreviewWorker,
+  renderPreview,
+  StalePreview,
+} from '../lib/previewClient'
 import {
   applyPreset,
   cloneRecipe,
@@ -43,7 +48,7 @@ interface EditorPhoto {
   id: string
   file: File
   sourceUrl: string
-  status: 'waiting' | 'processing' | 'done' | 'error'
+  status: 'waiting' | 'processing' | 'done' | 'error' | 'cancelled'
 }
 
 const bandLabels: Record<HslBand, string> = {
@@ -272,6 +277,8 @@ export function PhotoEditor({
   const [message, setMessage] = useState<string>()
   const [report, setReport] = useState<RgbHistogram>()
   const [sample, setSample] = useState<{ x: number; y: number; r: number; g: number; b: number }>()
+  const [brushPoint, setBrushPoint] = useState<{ x: number; y: number }>()
+  const [cloneSource, setCloneSource] = useState<{ x: number; y: number }>()
   const afterRef = useRef<HTMLCanvasElement>(null)
   const beforeRef = useRef<HTMLCanvasElement>(null)
   const stageRef = useRef<HTMLDivElement>(null)
@@ -285,6 +292,10 @@ export function PhotoEditor({
   const cropStart = useRef<{ x: number; y: number } | null>(null)
   const pan = useRef<{ x: number; y: number; left: number; top: number } | null>(null)
   latest.current = recipe
+
+  useEffect(() => {
+    return () => disposePreviewWorker()
+  }, [])
 
   useEffect(() => {
     const node = stageRef.current
@@ -473,12 +484,25 @@ export function PhotoEditor({
       replacePresent(next)
       return
     }
-    if (tool !== 'heal' && tool !== 'dodge' && tool !== 'burn') return
+    if (
+      tool !== 'heal' &&
+      tool !== 'clone' &&
+      tool !== 'dodge' &&
+      tool !== 'burn'
+    ) {
+      return
+    }
+    if (tool === 'clone' && !cloneSource) {
+      setCloneSource(orientedPoint(point))
+      setMessage('Источник клонирования выбран. Теперь проведите по дефекту.')
+      return
+    }
     beginGesture()
     stroke.current = {
       id: crypto.randomUUID(),
       tool,
       points: [orientedPoint(point)],
+      source: tool === 'clone' ? cloneSource : undefined,
       radius: brushRadius,
       strength: brushStrength,
     }
@@ -488,6 +512,14 @@ export function PhotoEditor({
   }
 
   function onCanvasMove(event: React.PointerEvent<HTMLCanvasElement>) {
+    if (
+      tool === 'heal' ||
+      tool === 'clone' ||
+      tool === 'dodge' ||
+      tool === 'burn'
+    ) {
+      setBrushPoint(pointerRatio(event))
+    }
     const captured = event.currentTarget.hasPointerCapture(event.pointerId)
     if (tool === 'hand' && pan.current && stageRef.current) {
       stageRef.current.scrollLeft = pan.current.left - (event.clientX - pan.current.x)
@@ -544,6 +576,7 @@ export function PhotoEditor({
     { id: 'hand', label: 'Рука', icon: <Hand size={18} /> },
     { id: 'crop', label: 'Кадр', icon: <Crop size={18} /> },
     { id: 'heal', label: 'Лечение', icon: <FirstAid size={18} /> },
+    { id: 'clone', label: 'Клон', icon: <CopySimple size={18} /> },
     { id: 'dodge', label: 'Свет', icon: <SunDim size={18} /> },
     { id: 'burn', label: 'Тень', icon: <Moon size={18} /> },
   ]
@@ -657,6 +690,7 @@ export function PhotoEditor({
               onPointerDown={onCanvasDown}
               onPointerMove={onCanvasMove}
               onPointerUp={onCanvasUp}
+              onPointerLeave={() => setBrushPoint(undefined)}
             />
             {compare && (
               <>
@@ -671,6 +705,21 @@ export function PhotoEditor({
                   onChange={(event) => setComparison(Number(event.target.value))}
                 />
               </>
+            )}
+            {(tool === 'heal' ||
+              tool === 'clone' ||
+              tool === 'dodge' ||
+              tool === 'burn') &&
+              brushPoint && (
+              <div
+                className="brush-cursor"
+                style={{
+                  left: `${brushPoint.x * 100}%`,
+                  top: `${brushPoint.y * 100}%`,
+                  width: `${brushRadius * 200}%`,
+                  height: `${brushRadius * 200}%`,
+                }}
+              />
             )}
             {tool === 'crop' && (
               <div
@@ -922,19 +971,41 @@ export function PhotoEditor({
           </>
         )}
 
-        {(tool === 'heal' || tool === 'dodge' || tool === 'burn') && (
+        {(tool === 'heal' ||
+          tool === 'clone' ||
+          tool === 'dodge' ||
+          tool === 'burn') && (
           <>
             <div className="panel-heading">
               <div>
                 <span className="step">Локально</span>
                 <h2>
-                  {tool === 'heal' ? 'Лечение' : tool === 'dodge' ? 'Осветление' : 'Затемнение'}
+                  {tool === 'heal'
+                    ? 'Лечение'
+                    : tool === 'clone'
+                      ? 'Клонирование'
+                      : tool === 'dodge'
+                        ? 'Осветление'
+                        : 'Затемнение'}
                 </h2>
               </div>
             </div>
             <p className="beta-note">
-              Мазки сохраняются только на этом кадре. В пресет и на другие фотографии они не копируются.
+              {tool === 'clone'
+                ? cloneSource
+                  ? 'Источник выбран. Рисуйте по области, которую нужно заменить.'
+                  : 'Сначала нажмите на чистую область-источник, затем проведите по дефекту.'
+                : 'Мазки сохраняются только на этом кадре. В пресет и на другие фотографии они не копируются.'}
             </p>
+            {tool === 'clone' && cloneSource && (
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => setCloneSource(undefined)}
+              >
+                Выбрать новый источник
+              </button>
+            )}
             <EditorSlider
               label="Радиус"
               value={Math.round(brushRadius * 1000) / 10}

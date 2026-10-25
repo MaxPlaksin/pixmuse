@@ -5,6 +5,7 @@ import type { Raster } from './renderRecipe'
 let worker: Worker | null = null
 let workerSequence = 0
 const queue = createPreviewQueue<Raster>()
+const pendingRejectors = new Set<(error: Error) => void>()
 
 function getWorker(): Worker | null {
   if (typeof Worker === 'undefined') return null
@@ -33,6 +34,7 @@ function renderInWorker(
   }
   const requestId = ++workerSequence
   return new Promise((resolve, reject) => {
+    pendingRejectors.add(reject)
     const onMessage = (event: MessageEvent) => {
       if (event.data?.requestId !== requestId) return
       cleanup()
@@ -49,6 +51,7 @@ function renderInWorker(
       reject(new Error('Предпросмотр не запустился в фоновом потоке'))
     }
     function cleanup() {
+      pendingRejectors.delete(reject)
       thread?.removeEventListener('message', onMessage)
       thread?.removeEventListener('error', onError)
     }
@@ -60,6 +63,16 @@ function renderInWorker(
       [copy.buffer],
     )
   })
+}
+
+export function disposePreviewWorker(): void {
+  queue.cancelPending()
+  worker?.terminate()
+  worker = null
+  workerSequence += 1
+  const error = new StalePreview()
+  pendingRejectors.forEach((reject) => reject(error))
+  pendingRejectors.clear()
 }
 
 export function renderPreview(

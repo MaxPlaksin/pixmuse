@@ -83,4 +83,27 @@ describe('applyAdjustments', () => {
     expect(result[2]).toBeLessThan(100)
     expect(result[3]).toBe(120)
   })
+
+  it('контраст уводит тёмный пиксель ещё темнее', () => {
+    const source = new Uint8ClampedArray([50, 60, 70, 255])
+    const result = applyAdjustments(source, {
+      exposure: 0,
+      contrast: 50,
+      saturation: 0,
+      warmth: 0,
+    })
+    expect(result[0]).toBeLessThan(50)
+    expect(result[3]).toBe(255)
+  })
+
+  it('насыщенность усиливает уже цветной пиксель', () => {
+    const source = new Uint8ClampedArray([200, 20, 20, 255])
+    const result = applyAdjustments(source, {
+      exposure: 0,
+      contrast: 0,
+      saturation: 80,
+      warmth: 0,
+    })
+    expect(result[0] - result[1]).toBeGreaterThan(200 - 20)
+  })
 })

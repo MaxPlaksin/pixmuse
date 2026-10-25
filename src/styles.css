@@ -349,6 +349,11 @@ h2 {
   font-size: 10px;
 }
 
+.photo-meta .quality-warning {
+  color: #c26a2f;
+  font-weight: 700;
+}
+
 .remove-button {
   width: 28px;
   height: 28px;
@@ -434,8 +439,9 @@ h2 {
 .preview-toolbar {
   min-height: 42px;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
+  gap: 12px;
   padding: 0 4px 13px;
 }
 
@@ -459,13 +465,37 @@ h2 {
   font-size: 10px;
 }
 
-.comparison-legend {
+.compare-switch {
   display: flex;
-  gap: 18px;
+  flex: 0 0 auto;
+  padding: 3px;
+  border: 1px solid #e7d3de;
+  border-radius: 12px;
+  background: #f6e8ef;
 }
 
-.comparison-legend span:last-child {
-  color: var(--accent);
+.compare-switch button {
+  min-width: 78px;
+  min-height: 34px;
+  padding: 0 16px;
+  color: #8d7382;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.compare-switch button:hover:not(.active) {
+  color: #4d2d3c;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.compare-switch button.active {
+  color: #fff;
+  background: var(--accent);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--accent) 38%, transparent);
 }
 
 .image-stage {
@@ -994,6 +1024,20 @@ h2,
   gap: 8px;
 }
 
+.project-switcher {
+  min-width: 150px;
+  max-width: 220px;
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 0 30px 0 10px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .project-actions .profile-button {
   min-height: 34px;
   padding: 0 10px;
@@ -1050,6 +1094,25 @@ h2,
   display: grid;
   gap: 8px;
   margin-top: 16px;
+}
+
+.quality-summary {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--border));
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--accent) 7%, #fff);
+}
+
+.quality-summary strong {
+  color: var(--panel-text);
+  font-size: 12px;
+}
+
+.quality-summary span {
+  color: var(--panel-muted);
+  font-size: 11px;
 }
 
 .batch-extra label,
@@ -1244,6 +1307,16 @@ h2,
 
 .editor-canvas.sample {
   cursor: crosshair;
+}
+
+.brush-cursor {
+  position: absolute;
+  z-index: 3;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(58, 23, 37, 0.55);
+  pointer-events: none;
+  transform: translate(-50%, -50%);
 }
 
 .histogram-panel {

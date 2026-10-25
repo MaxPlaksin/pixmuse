@@ -131,11 +131,25 @@ function softenSkin(
   }
 }
 
-async function fileToImageData(file: Blob): Promise<{
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new DOMException('Операция отменена', 'AbortError')
+  }
+}
+
+async function fileToImageData(
+  file: Blob,
+  signal?: AbortSignal,
+): Promise<{
   bitmap: ImageBitmap
   imageData: ImageData
 }> {
+  throwIfAborted(signal)
   const bitmap = await openBitmap(file)
+  if (signal?.aborted) {
+    bitmap.close()
+    throwIfAborted(signal)
+  }
   const canvas = document.createElement('canvas')
   canvas.width = bitmap.width
   canvas.height = bitmap.height
@@ -160,6 +174,64 @@ export async function readColorStats(file: Blob): Promise<ColorStats> {
   return stats
 }
 
+export function composeRetouchPixels(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  referenceStats: ColorStats | undefined,
+  strength: number,
+  adjustments: RetouchAdjustments,
+  recipe?: EditRecipe,
+): { pixels: Uint8ClampedArray; width: number; height: number } {
+  let pixels = source
+  if (referenceStats && strength > 0) {
+    pixels = transferPixels(pixels, calculateStats(pixels), referenceStats, strength)
+  }
+  pixels = applyAdjustments(pixels, adjustments)
+  if (recipe && !recipeIsIdentity(recipe)) {
+    return renderRecipe(pixels, width, height, recipe)
+  }
+  return { pixels, width, height }
+}
+
+export function paintRetouch(
+  target: HTMLCanvasElement,
+  pixels: Uint8ClampedArray,
+  width: number,
+  height: number,
+  skinSmoothing = 0,
+) {
+  const scratch = document.createElement('canvas')
+  scratch.width = width
+  scratch.height = height
+  const scratchContext = scratch.getContext('2d', { willReadFrequently: true })
+  if (!scratchContext) throw new Error('Браузер не поддерживает Canvas 2D')
+  const output = scratchContext.createImageData(width, height)
+  output.data.set(pixels)
+  scratchContext.putImageData(output, 0, 0)
+
+  if (skinSmoothing > 0) {
+    const blurCanvas = document.createElement('canvas')
+    blurCanvas.width = width
+    blurCanvas.height = height
+    const blurContext = blurCanvas.getContext('2d', { willReadFrequently: true })
+    if (blurContext) {
+      const radius = 0.6 + (skinSmoothing / 100) * 2.4
+      blurContext.filter = `blur(${radius}px)`
+      blurContext.drawImage(scratch, 0, 0)
+      const blurred = blurContext.getImageData(0, 0, width, height)
+      softenSkin(output, blurred, skinSmoothing)
+      scratchContext.putImageData(output, 0, 0)
+    }
+  }
+
+  target.width = width
+  target.height = height
+  const context = target.getContext('2d')
+  if (!context) throw new Error('Браузер не поддерживает Canvas 2D')
+  context.drawImage(scratch, 0, 0)
+}
+
 export async function processPhoto(
   file: Blob,
   referenceStats: ColorStats | undefined,
@@ -170,54 +242,37 @@ export async function processPhoto(
     recipe?: EditRecipe
     format?: 'jpeg' | 'png'
     maxEdge?: number
+    signal?: AbortSignal
   },
 ): Promise<Blob> {
   const quality = options?.quality ?? 0.92
   const format = options?.format ?? 'jpeg'
-  const { bitmap, imageData } = await fileToImageData(file)
-  let pixels: Uint8ClampedArray = new Uint8ClampedArray(imageData.data)
-  if (referenceStats && strength > 0) {
-    pixels = transferPixels(
-      pixels,
-      calculateStats(pixels),
+  const { bitmap, imageData } = await fileToImageData(file, options?.signal)
+  let composed
+  try {
+    throwIfAborted(options?.signal)
+    composed = composeRetouchPixels(
+      new Uint8ClampedArray(imageData.data),
+      bitmap.width,
+      bitmap.height,
       referenceStats,
       strength,
+      adjustments,
+      options?.recipe,
     )
+  } finally {
+    bitmap.close()
   }
-  pixels = applyAdjustments(pixels, adjustments)
-  let width = bitmap.width
-  let height = bitmap.height
-  bitmap.close()
-  if (options?.recipe && !recipeIsIdentity(options.recipe)) {
-    const rendered = renderRecipe(pixels, width, height, options.recipe)
-    pixels = rendered.pixels
-    width = rendered.width
-    height = rendered.height
-  }
-
+  throwIfAborted(options?.signal)
   const canvas = document.createElement('canvas')
-  canvas.width = width
-  canvas.height = height
-  const context = canvas.getContext('2d', { willReadFrequently: true })
-  if (!context) throw new Error('Браузер не поддерживает Canvas 2D')
-  const output = context.createImageData(width, height)
-  output.data.set(pixels)
-  context.putImageData(output, 0, 0)
-
-  if (adjustments.skinSmoothing && adjustments.skinSmoothing > 0) {
-    const blurCanvas = document.createElement('canvas')
-    blurCanvas.width = width
-    blurCanvas.height = height
-    const blurContext = blurCanvas.getContext('2d', { willReadFrequently: true })
-    if (blurContext) {
-      const radius = 0.6 + (adjustments.skinSmoothing / 100) * 2.4
-      blurContext.filter = `blur(${radius}px)`
-      blurContext.drawImage(canvas, 0, 0)
-      const blurred = blurContext.getImageData(0, 0, width, height)
-      softenSkin(output, blurred, adjustments.skinSmoothing)
-      context.putImageData(output, 0, 0)
-    }
-  }
+  paintRetouch(
+    canvas,
+    composed.pixels,
+    composed.width,
+    composed.height,
+    adjustments.skinSmoothing ?? 0,
+  )
+  throwIfAborted(options?.signal)
 
   const size = fittedSize(canvas.width, canvas.height, options?.maxEdge ?? 0)
   const encoded = document.createElement('canvas')
@@ -228,11 +283,22 @@ export async function processPhoto(
   encodedContext.drawImage(canvas, 0, 0, size.width, size.height)
   const blob = await new Promise<Blob>((resolve, reject) => {
     encoded.toBlob(
-      (value) =>
-        value ? resolve(value) : reject(new Error('Не удалось создать файл')),
+      (value) => {
+        if (options?.signal?.aborted) {
+          reject(new DOMException('Операция отменена', 'AbortError'))
+        } else if (value) {
+          resolve(value)
+        } else {
+          reject(new Error('Не удалось создать файл'))
+        }
+      },
       format === 'png' ? 'image/png' : 'image/jpeg',
       quality,
     )
   })
-  return format === 'jpeg' ? attachJpegMetadata(file, blob) : blob
+  throwIfAborted(options?.signal)
+  const output =
+    format === 'jpeg' ? await attachJpegMetadata(file, blob) : blob
+  throwIfAborted(options?.signal)
+  return output
 }

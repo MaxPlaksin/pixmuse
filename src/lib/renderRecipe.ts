@@ -616,6 +616,9 @@ function applyStrokes(
   height: number,
   strokes: LocalStroke[],
 ) {
+  const cloneReference = strokes.some((stroke) => stroke.tool === 'clone')
+    ? source.slice()
+    : undefined
   for (const stroke of strokes) {
     const bounds = strokeBounds(stroke, width, height)
     if (!bounds) continue
@@ -633,7 +636,25 @@ function applyStrokes(
         if (influence === 0) continue
         const amount = (stroke.strength / 100) * influence
         const index = indexOf(width, x, y)
-        if (stroke.tool === 'heal') {
+        if (
+          stroke.tool === 'clone' &&
+          stroke.source &&
+          stroke.points[0] &&
+          cloneReference
+        ) {
+          const offsetX =
+            (stroke.source.x - stroke.points[0].x) * Math.max(0, width - 1)
+          const offsetY =
+            (stroke.source.y - stroke.points[0].y) * Math.max(0, height - 1)
+          const sampleX = clamp(Math.round(x + offsetX), 0, width - 1)
+          const sampleY = clamp(Math.round(y + offsetY), 0, height - 1)
+          const sampleIndex = indexOf(width, sampleX, sampleY)
+          for (let channel = 0; channel < 4; channel += 1) {
+            source[index + channel] =
+              source[index + channel] * (1 - amount) +
+              cloneReference[sampleIndex + channel] * amount
+          }
+        } else if (stroke.tool === 'heal') {
           const sampled = sampleOutsideSpot(
             reference,
             regionWidth,
@@ -652,7 +673,7 @@ function applyStrokes(
             source[index + 1] * (1 - amount) + sampled[1] * amount
           source[index + 2] =
             source[index + 2] * (1 - amount) + sampled[2] * amount
-        } else {
+        } else if (stroke.tool === 'dodge' || stroke.tool === 'burn') {
           const delta = 255 * 0.55 * amount * (stroke.tool === 'dodge' ? 1 : -1)
           source[index] += delta
           source[index + 1] += delta

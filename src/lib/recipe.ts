@@ -54,12 +54,13 @@ export interface HslAdjustment {
 
 export type HslRecipe = Record<HslBand, HslAdjustment>
 
-export type StrokeTool = 'heal' | 'dodge' | 'burn'
+export type StrokeTool = 'heal' | 'clone' | 'dodge' | 'burn'
 
 export interface LocalStroke {
   id: string
   tool: StrokeTool
   points: Array<{ x: number; y: number }>
+  source?: { x: number; y: number }
   radius: number
   strength: number
 }
