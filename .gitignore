@@ -9,3 +9,13 @@ dist/
 coverage/
 test-results/
 playwright-report/
+doc/tools/.venv/
+
+# Liz shoot — large local assets (not in git)
+*.cr3
+*.CR3
+*.psb
+*.PSB
+doc/pilot_girl1/
+doc/*.mp4
+doc/**/*.mp4
